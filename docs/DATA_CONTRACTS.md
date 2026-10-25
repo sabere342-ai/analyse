@@ -1,5 +1,13 @@
 # Data contracts and privacy
 
+## R2 inspection and reconciliation additions
+
+`POST /api/imports/inspect` uses the authenticated, CSRF-protected, no-store upload boundary. It inspects in bounded temporary scratch and returns filename/size/signature validity, checksum/versions, per-sheet headings/previews, page count where extraction succeeds, profile/period where available and one of `RECOGNIZED`, `NEEDS_MAPPING`, `NEEDS_REVIEW`, `UNSUPPORTED`, `INVALID`. No batch/original/analytics record is stored. Recognition is structural evidence only. The frontend supports data-sheet selection and canonical-to-heading dropdowns; custom maps still require all required fields on each selected sheet.
+
+Generic consecutive subtotals are compared with only their preceding group in that worksheet; the final source footer remains independent. Specialized POS nested item/representative/category/report totals keep their own checks. Net-value footers supply the expected workbook net only when all selected sheet groups provide one. Explicit expected totals never waive source checks. Reconciliation checks add `difference = actual - expected`; field parsing diagnostics preserve source column/value/location and expected format. Formula checks include footer/header rows. Parser1.3.0 changes interpretation identity; accepted historical batches stay immutable.
+
+Parser workers retain a1GiB memory and30s CPU bound, with35s parent wall timeout; Windows uses a process-limited Job Object and Unix retains resource limits. Generic text extraction also stops after4 million cell characters or100,000 physical rows, in addition to existing nonempty-row/column/cell bounds. PDF rendering uses the same OS limit abstraction with its existing render deadline. Native XLS dates use their workbook epoch; other numeric cells never become dates or reconstructed barcode strings.
+
 ## Supported import contract
 
 The application supports bounded local CSV, XLS, XLSX and table-based text PDF extraction. The three supplied Arabic POS PDFs now have an inspected `arabic_pos_v1` adapter. Generic/scanned/encrypted/changed layouts are not declared validated by that fact; unsupported layouts fail safely and no external OCR/AI upload occurs. Synthetic templates remain explicitly synthetic.
@@ -21,7 +29,7 @@ Movement kinds: `sale`, `purchase`, `sales_return`, `purchase_return`, `transfer
 
 ## Inspected Arabic POS profile
 
-`pdf_profile=auto` recognizes a report title plus the fixed physical column schema; `generic` opts out, and explicit `arabic_pos_v1` requires that signature. The selected report type must agree with the printed report. Dates must match in the default API `source_dates=manual` mode. With explicit `source_dates=report` (enabled in the UI), recognized PDFs supply their printed date/period, which is validated and displayed in the staged batch; generic PDFs/Excel/CSV keep entered dates. Final detected dates participate in identity, so changing an unused input date cannot duplicate that interpretation. The fixed profile rejects custom column maps rather than ignoring them. Parser version is 1.2.0 and contract version is 1.2.0; reprocessing cannot add overlapping accepted facts.
+`pdf_profile=auto` recognizes a report title plus the fixed physical column schema; `generic` opts out, and explicit `arabic_pos_v1` requires that signature. The selected report type must agree with the printed report. Dates must match in the default API `source_dates=manual` mode. With explicit `source_dates=report` (enabled in the UI), recognized PDFs supply their printed date/period, which is validated and displayed in the staged batch; generic PDFs/Excel/CSV keep entered dates. Final detected dates participate in identity, so changing an unused input date cannot duplicate that interpretation. The fixed profile rejects custom column maps rather than ignoring them. Parser version is 1.3.0 and contract version is 1.2.0; reprocessing cannot add overlapping accepted facts.
 
 pdfplumber supplies table/row/cell geometry. Bounded PDFium cell reads supply logical Arabic/mixed Unicode without reversing barcodes/Latin identifiers. Both original spatial cells and decoded logical cells, bounding boxes, table/page/row, section context and source period are retained. PDFium was already a locked dependency and is now explicit; its bundled license notices remain intact. PyMuPDF was used only as an independent read-only inspection comparison, not shipped as an application dependency.
 

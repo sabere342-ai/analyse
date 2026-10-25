@@ -1,5 +1,7 @@
 # Verification evidence
 
+R2 current Windows evidence (2026-10-25) is recorded in [R2_DELIVERY.md](R2_DELIVERY.md):93 backend passed/15 explicit external-input skips,10 UI passed,4 Chromium journeys passed, strict build and quality checks passed. An actual isolated HTTP server was stopped/restarted on the same synthetic store; accepted stock persisted, absent profit stayed unavailable, CSV/XLSX/PDF exports succeeded, and audited rollback/rejection passed. Private-report/cloud successes elsewhere in this document are historical and are not a claim that those absent inputs were retested here.
+
 ## Current completed run — 2026-10-24
 
 The application has been tested with the three supplied private Arabic POS PDFs, not only synthetic examples. The owner confirmed that the representative report excludes unassigned sales. Contract 1.2 records that coverage and the source note; parser version remains 1.1. Each barcode was checked as a nonnegative subset before complete movement was selected for store sold/returned units. Unexplained or negative differences still block store demand. Full-store revenue/profit remain unavailable; representative monetary measures are explicitly scoped. Independent snapshot date still prevents backdated coverage/replenishment.

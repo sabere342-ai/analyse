@@ -29,6 +29,7 @@ import type {
   Rules,
 } from "./api";
 import "./style.css";
+import { ImportInspection } from "./ImportInspection";
 
 type Page =
   "overview" | "inventory" | "representatives" | "imports" | "settings";
@@ -65,6 +66,24 @@ function App() {
     [applied, setApplied] = useState<AnalysisFilters | null>(null);
   const reportRequest = useRef(0);
   const datasetRequest = useRef(0);
+  useEffect(() => {
+    const expired = () => {
+      reportRequest.current += 1;
+      datasetRequest.current += 1;
+      setAuth((current) =>
+        current ? { ...current, authenticated: false } : current,
+      );
+      setReport(null);
+      setBatch(null);
+      setBatches([]);
+      setApplied(null);
+      setBusy(false);
+      setNotice("");
+      setError("انتهت الجلسة؛ سجّل الدخول لمتابعة العمل");
+    };
+    window.addEventListener("madrid:session-expired", expired);
+    return () => window.removeEventListener("madrid:session-expired", expired);
+  }, []);
   const fail = useCallback(
     (e: unknown) =>
       setError(e instanceof Error ? e.message : "حصل خطأ؛ حاول تاني"),
@@ -172,6 +191,12 @@ function App() {
   async function logout() {
     try {
       await api("/auth/logout", { method: "POST" });
+      reportRequest.current += 1;
+      datasetRequest.current += 1;
+      setError("");
+      setNotice("");
+      setApplied(null);
+      setBusy(false);
       setAuth({
         initialized: true,
         authenticated: false,
@@ -181,8 +206,10 @@ function App() {
       setReport(null);
       setBatch(null);
       setBatches([]);
-    } catch (e) {
-      fail(e);
+    } catch {
+      setError(
+        "تعذر تأكيد تسجيل الخروج من الخادم. لو الاتصال انقطع فالجلسة قد تظل نشطة؛ حاول تسجيل الخروج مرة أخرى",
+      );
     }
   }
   async function review(id: string) {
@@ -1083,6 +1110,9 @@ export function Imports({
     [uploadError, setUploadError] = useState(""),
     [importStart, setImportStart] = useState(defaults.end),
     [importEnd, setImportEnd] = useState(defaults.end);
+  const [mapping, setMapping] = useState<Record<string, string>>({});
+  const [mappingText, setMappingText] = useState("{}");
+  const [sheets, setSheets] = useState("");
   useEffect(() => {
     void api<Batch[]>("/batches").then(setList).catch(fail);
   }, [batch, fail]);
@@ -1295,22 +1325,24 @@ export function Imports({
               </small>
             </label>
           )}
-          <div className="upload-box">
-            <ArrowUpFromLine size={28} />
-            <label>
-              اختار ملف التقرير
-              <input
-                name="file"
-                type="file"
-                accept=".pdf,.csv,.xls,.xlsx"
-                required
-              />
-            </label>
-            <small>
-              PDF / CSV / XLS / XLSX · حد {maxUploadBytes / 1024 / 1024} MB ·
-              PDF بجدول نصي قابل للاستخراج
-            </small>
-          </div>
+          <ImportInspection
+            maxBytes={maxUploadBytes}
+            type={type}
+            mapping={mapping}
+            onMapping={(next) => {
+              setMapping(next);
+              setMappingText(JSON.stringify(next));
+            }}
+            sheets={sheets}
+            onSheets={setSheets}
+            onDetected={(kind, period) => {
+              setType(kind);
+              if (period) {
+                setImportStart(period.start);
+                setImportEnd(period.end);
+              }
+            }}
+          />
           <p className="hint">
             الجرد والتكاليف: تاريخ البداية والنهاية لازم يكونوا نفس اليوم. تنسيق
             تقارير الجرد والمندوبين والحركة المعاير بيتعرف تلقائيًا؛ راجع الصفوف
@@ -1330,6 +1362,8 @@ export function Imports({
               أوراق Excel المطلوبة (اختياري)
               <textarea
                 name="sheets"
+                value={sheets}
+                onChange={(event) => setSheets(event.target.value)}
                 dir="auto"
                 placeholder="اسم ورقة واحد في كل سطر؛ اتركه فارغًا لقراءة كل الأوراق"
               />
@@ -1373,7 +1407,15 @@ export function Imports({
                 name="mapping"
                 dir="ltr"
                 placeholder={'{"barcode":"كود الصنف","quantity":"الرصيد"}'}
-                defaultValue="{}"
+                value={mappingText}
+                onChange={(event) => {
+                  setMappingText(event.target.value);
+                  try {
+                    setMapping(JSON.parse(event.target.value));
+                  } catch {
+                    /* Keep the last valid mapping. */
+                  }
+                }}
               />
             </label>
             <small>
@@ -1550,6 +1592,7 @@ export function Imports({
                   <th>المؤشر</th>
                   <th>المصدر</th>
                   <th>مجموع الصفوف</th>
+                  <th>الفرق (الصفوف − المصدر)</th>
                   <th>المطابقة</th>
                 </tr>
               </thead>
@@ -1559,6 +1602,7 @@ export function Imports({
                     <td>{k}</td>
                     <td>{c.expected}</td>
                     <td>{c.actual}</td>
+                    <td>{c.difference ?? "—"}</td>
                     <td>{c.matches ? "✓ مطابق" : "غير مطابق"}</td>
                   </tr>
                 ))}
@@ -1601,6 +1645,15 @@ export function Imports({
                         <td>
                           {row.issues.map((i) => (
                             <p key={i}>{message(i)}</p>
+                          ))}
+                          {row.diagnostics?.map((diagnostic, index) => (
+                            <p key={index}>
+                              عمود <bdi>{diagnostic.column}</bdi> · القيمة:{" "}
+                              <bdi>{diagnostic.value || "فارغة"}</bdi>
+                              <br />
+                              المطلوب: <bdi>{diagnostic.expected}</bdi>؛ صحح
+                              المصدر أو تعيين الأعمدة وأعد الرفع.
+                            </p>
                           ))}
                         </td>
                       </tr>

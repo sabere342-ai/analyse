@@ -7,7 +7,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-PARSER_VERSION = "1.2.0"
+PARSER_VERSION = "1.3.0"
 CONTRACT_VERSION = "1.2.0"
 DIGITS = str.maketrans("٠١٢٣٤٥٦٧٨٩۰۱۲۳۴۵۶۷۸۹", "01234567890123456789")
 ReportType = Literal["snapshot", "sales", "movement", "costs", "expenses", "targets"]

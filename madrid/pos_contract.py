@@ -294,7 +294,9 @@ def normalize_pos(
     if not observed_footer:
         source_issues[0].append("pos_independent_report_footer_missing")
     effective = spec.model_copy(update={"expected": {**observed_footer, **spec.expected}})
-    records, issues, reconciliation = normalize_generic(canonical, effective)
+    # This adapter has independently checked item/representative/category/report
+    # totals above. They are nested groups, not generic consecutive segments.
+    records, issues, reconciliation = normalize_generic(canonical, effective, source_subtotals_checked=True)
     for i, entry in enumerate(records):
         entry["raw"] = raw[i]
         entry["kind"] = classifications[i]

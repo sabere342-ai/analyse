@@ -1,5 +1,9 @@
 # Delivery status
 
+## R2 candidate — 2026-10-25
+
+`PARTIAL_MADRID_R2_FUNCTIONAL_DELIVERY`: complete local improvements to inspection/mapping, generic subtotal and monetary-footer reconciliation, XLS dates, Windows parser/PDF/backup operation and session feedback. Backend93 passed/15 explicit external-input skips; UI10 passed; browser4 passed. See [current delivery and limitations](docs/R2_DELIVERY.md). Private-source acceptance and PostgreSQL integration in this Windows checkout remain unverified. Vercel team access returned403; the existing Preview, database, owner and alias were left untouched. This is a review candidate, not full R2/private-source or hosted acceptance.
+
 Authorization covers complete MVP execution without phase gates, and the user subsequently requested Vercel deployment and complete hosting. The user clarified private personal testing on Hobby only, with no Pro activation. The owner now explicitly authorizes publishing the complete application source, tests and documentation to the existing `sabere342-ai/analyse` GitHub repository. Private-data uploads, credentials, paid services and destruction of originals remain unauthorized.
 
 1. DONE — Six core documents, locked compatible development environment, authenticated Arabic RTL UI and static-only PWA.

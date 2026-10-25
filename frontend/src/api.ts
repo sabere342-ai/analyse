@@ -99,6 +99,13 @@ export type Row = {
   kind: string;
   data: Record<string, string>;
   issues: string[];
+  diagnostics?: {
+    field: string;
+    column: string;
+    value: string;
+    expected: string;
+    issue: string;
+  }[];
   raw: {
     cells: string[];
     logical_cells?: string[];
@@ -123,7 +130,12 @@ export type Batch = {
     totals: Record<string, string>;
     checks: Record<
       string,
-      { expected: string; actual: string; matches: boolean }
+      {
+        expected: string;
+        actual: string;
+        matches: boolean;
+        difference?: string;
+      }
     >;
   };
   metadata: Record<string, unknown>;
@@ -284,6 +296,20 @@ export const labels: Record<string, string> = {
   parser_resource_limit_or_failure:
     "تعذر قراءة الملف ضمن حدود المعالجة؛ جرّب اختيار ورقة البيانات فقط أو رفع نسخة CSV",
   parser_timeout: "استخراج الملف تجاوز الوقت المسموح",
+  UnicodeDecodeError:
+    "ترميز الملف مش UTF-8؛ اختار Windows Arabic وأعد فحص الملف",
+  invalid_csv_quoting_or_field_size:
+    "CSV فيه علامات تنصيص غير مغلقة أو خلية طويلة؛ أعد تصديره بعلامات تنصيص صحيحة",
+  check_numeric_barcode_columns:
+    "فيه خلايا رقمية؛ تأكد أن الباركود محفوظ كنص، لأن الأصفار المفقودة لا يمكن استعادتها تلقائيًا",
+  subtotal_requires_numeric_evidence:
+    "المجموع الفرعي بدون قيمة مستقلة قابلة للمطابقة؛ استخدم جدولًا بمجاميع واضحة",
+  unsupported_file_type:
+    "نوع الملف غير مدعوم؛ استخدم PDF نصي أو CSV أو XLS أو XLSX",
+  extracted_text_limit:
+    "النص المستخرج أكبر من حد المعالجة؛ اختار ورقة البيانات أو قسّم المصدر لفترات غير متداخلة",
+  row_or_column_limit:
+    "الملف تجاوز حدود الصفوف أو الأعمدة؛ اختار أوراق البيانات فقط وأزل التنسيق الزائد من نسخة جديدة",
 };
 export function message(code: string): string {
   return (
@@ -309,6 +335,11 @@ export async function api<T>(
   });
   if (!response.ok) {
     const error: { detail?: unknown } = await response.json().catch(() => ({}));
+    if (
+      response.status === 401 &&
+      (!path.startsWith("/auth/") || path === "/auth/logout")
+    )
+      window.dispatchEvent(new Event("madrid:session-expired"));
     throw new Error(
       typeof error.detail === "string"
         ? message(error.detail)

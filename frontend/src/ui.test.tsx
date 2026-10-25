@@ -31,6 +31,27 @@ function emptyReport(): Report {
   };
 }
 describe("honest financial display", () => {
+  it("announces an expired private API session but preserves invalid-login feedback", async () => {
+    const expired = vi.fn();
+    window.addEventListener("madrid:session-expired", expired);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: false,
+        status: 401,
+        json: async () => ({ detail: "authentication_required" }),
+      }),
+    );
+    try {
+      await expect(api("/batches")).rejects.toThrow("سجّل الدخول");
+      expect(expired).toHaveBeenCalledTimes(1);
+      await expect(api("/auth/login", { method: "POST" })).rejects.toThrow();
+      expect(expired).toHaveBeenCalledTimes(1);
+    } finally {
+      window.removeEventListener("madrid:session-expired", expired);
+      vi.unstubAllGlobals();
+    }
+  });
   it("chooses accepted report dates and keeps the stock date independent", () => {
     const batch = (
       report_type: string,

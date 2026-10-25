@@ -6,7 +6,6 @@ import csv
 import io
 import json
 import os
-import resource
 import sys
 import zipfile
 from datetime import date, datetime
@@ -50,16 +49,23 @@ def validate_file(path: Path, suffix: str) -> None:
 def extract(path: Path, suffix: str, options: dict[str, Any]) -> list[dict[str, Any]]:
     validate_file(path, suffix)
     result: list[dict[str, Any]] = []
+    characters = 0
 
     def add(
         cells: list[Any], location: dict[str, Any], numeric: list[int] | None = None, formula: bool = False
     ) -> None:
+        nonlocal characters
+        if location.get("row", 0) > 100000:
+            raise ValueError("physical_row_limit")
         if not any(c is not None and str(c).strip() for c in cells):
             return
         if len(cells) > 100 or len(result) >= MAX_ROWS:
             raise ValueError("row_or_column_limit")
         if any(len(str(c or "")) > 2000 for c in cells):
             raise ValueError("cell_text_limit")
+        characters += sum(len(str(c)) for c in cells if c is not None)
+        if characters > 4_000_000:
+            raise ValueError("extracted_text_limit")
         result.append(
             {
                 "cells": [
@@ -86,8 +92,12 @@ def extract(path: Path, suffix: str, options: dict[str, Any]) -> list[dict[str, 
                 delimiter = csv.Sniffer().sniff(text[:8192], delimiters=",;\t").delimiter
             except csv.Error as exc:
                 raise ValueError("csv_delimiter_requires_selection") from exc
-        for i, row in enumerate(csv.reader(io.StringIO(text, newline=""), delimiter=delimiter), 1):
-            add(row, {"row": i})
+        try:
+            reader = csv.reader(io.StringIO(text, newline=""), delimiter=delimiter, strict=True)
+            for row in reader:
+                add(row, {"row": reader.line_num})
+        except csv.Error as exc:
+            raise ValueError("invalid_csv_quoting_or_field_size") from exc
     elif suffix == ".xlsx":
         from openpyxl import load_workbook
 
@@ -100,6 +110,9 @@ def extract(path: Path, suffix: str, options: dict[str, Any]) -> list[dict[str, 
         for sheet in book:
             if options.get("sheets") and sheet.title not in options["sheets"]:
                 continue
+            if (sheet.max_column or 0) > 100 or (sheet.max_row or 0) > 100000:
+                book.close()
+                raise ValueError("row_or_column_limit")
             for i, row in enumerate(sheet.iter_rows(), 1):
                 add(
                     [c.value for c in row],
@@ -124,11 +137,15 @@ def extract(path: Path, suffix: str, options: dict[str, Any]) -> list[dict[str, 
                 cells = sheet.row(i)
                 add(
                     [
-                        int(c.value) if c.ctype == 2 and float(c.value).is_integer() else c.value
+                        xlrd.xldate_as_datetime(c.value, book.datemode)
+                        if c.ctype == 3
+                        else int(c.value)
+                        if c.ctype == 2 and float(c.value).is_integer()
+                        else c.value
                         for c in cells
                     ],
                     {"sheet": sheet.name, "row": i + 1},
-                    [j for j, c in enumerate(cells) if c.ctype == 2],
+                    [j for j, c in enumerate(cells) if c.ctype in {2, 3, 4}],
                 )
         book.release_resources()
     else:
@@ -155,13 +172,21 @@ def extract(path: Path, suffix: str, options: dict[str, Any]) -> list[dict[str, 
 
 
 if __name__ == "__main__":
-    resource.setrlimit(resource.RLIMIT_AS, (1024**3, 1024**3))
-    resource.setrlimit(resource.RLIMIT_CPU, (30, 30))
-    resource.setrlimit(resource.RLIMIT_FSIZE, (128 * 1024**2, 128 * 1024**2))
     try:
+        from madrid.worker_limits import limit_worker
+
+        limit_worker()
         payload = json.load(sys.stdin)
+        if payload.get("inspect"):
+            payload["options"]["inspect"] = True
         output = extract(Path(payload["path"]), payload["suffix"], payload["options"])
-        print(json.dumps({"rows": output}, ensure_ascii=False))
+        if payload.get("inspect"):
+            from madrid.inspection import summarize
+
+            response = summarize(output)
+        else:
+            response = {"rows": output}
+        sys.stdout.buffer.write(json.dumps(response, ensure_ascii=False).encode("utf-8"))
     except Exception as exc:
         # Error types are safe; never echo arbitrary document text or library stack traces.
         allowed = str(exc) if isinstance(exc, ValueError) and str(exc).isascii() else type(exc).__name__

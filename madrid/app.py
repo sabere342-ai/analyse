@@ -46,6 +46,7 @@ from madrid.db import (
 )
 from madrid.extraction import MAX_BYTES
 from madrid.ingestion import compare_batch, now, stage, transition
+from madrid.inspection import inspect_source
 from madrid.reporting import export_report
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -318,6 +319,28 @@ def create_app(directory: Path | None = None) -> FastAPI:
         db.add(Audit(action="rules_updated", reason=json.dumps(body.model_dump(), sort_keys=True), at=now()))
         db.commit()
         return body.model_dump()
+
+    @app.post("/api/imports/inspect", dependencies=protected)
+    def inspect_upload(file: UploadFile = File(...), spec: str = Form("{}")) -> dict[str, Any]:
+        try:
+            options = json.loads(spec)
+            # Reuse the import contract to validate parser options without accepting facts.
+            parsed = ImportSpec.model_validate(
+                {
+                    "report_type": "snapshot",
+                    "start": "2000-01-01",
+                    "end": "2000-01-01",
+                    **options,
+                    "sheets": [],
+                    "column_map": {},
+                    "source_dates": "report",
+                }
+            )
+        except (ValueError, TypeError, ValidationError) as exc:
+            raise HTTPException(422, "invalid_import_metadata") from exc
+        return inspect_source(
+            file.filename or "upload", file.file.read(MAX_BYTES + 1), parsed.model_dump(mode="json")
+        )
 
     @app.post("/api/imports", dependencies=protected)
     def upload(file: UploadFile = File(...), spec: str = Form(...)) -> dict[str, Any]:

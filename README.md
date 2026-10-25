@@ -6,6 +6,10 @@ Arabic RTL, mobile-friendly analytics for one clothing store over its existing P
 
 ## Run locally
 
+R2 candidate (2026-10-25, Windows): read-only file inspection, visual column mapping, independent generic subtotals, printed net-total reuse, XLS dates, expired-session handling and Windows parser/backup fixes are implemented. Current evidence and limitations are in [R2 delivery](docs/R2_DELIVERY.md). Historical private-file/cloud checks below describe earlier environments; this checkout does not contain those private inputs.
+
+On Windows, use Python 3.12 and Node 24, `uv sync --frozen --python 3.12`, then `npm --prefix frontend ci --ignore-scripts` and `npm --prefix frontend run build`. Start with `.venv/Scripts/python.exe -m uvicorn madrid.app:create_app --factory --host 127.0.0.1 --port 8000`. For PDF exports install the native Pango libraries described in the [official WeasyPrint Windows instructions](https://doc.courtbouillon.org/weasyprint/latest/first_steps.html#windows) and set `WEASYPRINT_DLL_DIRECTORIES` to their directory. This run used the checksum-verified official WeasyPrint70.0 Windows onedir DLLs in ignored `.cache/weasyprint-runtime/onedir/weasyprint/_internal`; no global runtime/security configuration was changed. Browser tests accept `MADRID_BROWSER` or Playwright's installed Chromium and create an isolated local store on either platform.
+
 Tested environment: Debian13 x86_64, Python3.12.14, Node24.19.0, npm11.9.0. Use a supported Node24/Python3.12 environment and uv; exact dependencies are locked. WeasyPrint requires system Pango/fontconfig/DejaVu Sans (available here); Chromium is needed only for browser tests. On another Linux machine install reviewed OS packages from its trusted repository before running. No package-signature/TLS bypass.
 
 From the repository root:
@@ -22,6 +26,8 @@ Open the local service on port8000 in your browser. First visit creates the sing
 Development: run backend as above and `npm --prefix frontend run dev` separately; Vite on loopback proxies `/api` to8000. Rebuild before serving the production shell through FastAPI.
 
 ## Import, review and correct
+
+Selecting or dropping a file now inspects its signature and structure before staging. The inspection shows filename/size, pages or worksheets, source headings and preview rows, with `RECOGNIZED`, `NEEDS_MAPPING`, `NEEDS_REVIEW`, `UNSUPPORTED` or `INVALID`. Recognition means structural compatibility, not acceptance or verified business semantics. Select data worksheets and use the column dropdowns for unknown headings; advanced JSON mapping remains supported. After changing CSV encoding/delimiter, press the reinspection button. Inspection uses temporary local scratch only and creates no batch, durable original or dashboard facts. Extraction still stages an immutable candidate; review, reconciliation and explicit acceptance remain separate.
 
 Choose snapshot/sales/movement/costs/expenses/targets, source period, currency and scope. Snapshot/cost dates must match. Download the clearly synthetic template for column examples, or map canonical fields to source headings. CSV UTF-8/Windows Arabic and delimiter selection are supported; XLS/XLSX and multi-page table PDF have bounded local adapters. Arabic POS snapshot/sales/movement layouts are detected by title and fixed column signatures, with native Unicode cell decoding and printed-period validation; custom mapping is for the generic adapter.
 

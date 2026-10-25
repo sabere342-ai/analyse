@@ -46,7 +46,7 @@ def extract_pos(pdf: Any, path: Path, options: dict[str, Any]) -> list[dict[str,
             if requested == PROFILE:
                 raise ValueError("pos_profile_signature_not_found")
             return None
-        if detected != options["report_type"]:
+        if detected != options["report_type"] and not options.get("inspect"):
             raise ValueError("source_report_type_mismatch")
         if options.get("column_map"):
             raise ValueError("pos_fixed_profile_requires_empty_column_map")

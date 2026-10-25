@@ -396,7 +396,7 @@ def export_report(report: dict[str, Any], kind: str) -> bytes:
         + representatives
         + "</html>"
     )
-    license_text = Path(__file__).with_name("font-license.txt").read_text()
+    license_text = Path(__file__).with_name("font-license.txt").read_text(encoding="utf-8")
     return HTML(string=document, url_fetcher=deny_fetch).write_pdf(
         full_fonts=True,
         attachments=[
@@ -408,8 +408,7 @@ def export_report(report: dict[str, Any], kind: str) -> bytes:
 
 
 if __name__ == "__main__":
-    import resource
+    from madrid.worker_limits import limit_worker
 
-    resource.setrlimit(resource.RLIMIT_AS, (1024**3, 1024**3))
-    resource.setrlimit(resource.RLIMIT_CPU, (35, 35))
-    sys.stdout.buffer.write(export_report(json.load(sys.stdin), "pdf"))
+    limit_worker(35)
+    sys.stdout.buffer.write(export_report(json.load(sys.stdin.buffer), "pdf"))
