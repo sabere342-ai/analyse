@@ -6,7 +6,7 @@ Arabic RTL, mobile-friendly analytics for one clothing store over its existing P
 
 ## Run locally
 
-R2-G local real-POS acceptance now passes: all3 original reports were exercised in an isolated local store with independent source observations, reconciliation, explicit acceptance, analysis, exports, restart and rollback. The full Chromium suite passed5/5 together. See [R2-G scope and evidence](docs/R2G_ACCEPTANCE.md); this is a documented alternative to the unavailable historical all-field golden, and hosted access remains blocked. The earlier R2/R2-F results below are historical.
+R2-G local real-POS acceptance now passes: all3 original reports were exercised in an isolated local store with independent source observations, reconciliation, explicit acceptance, analysis, exports, restart and rollback. The full Chromium suite passed5/5 together. See [R2-G scope and evidence](docs/R2G_ACCEPTANCE.md); this is a documented alternative to the unavailable historical all-field golden. Vercel team access is restored and Hobby/protection are confirmed; the update awaits authenticated application and preservation checks because the connected browser cannot start. The earlier R2/R2-F results below are historical.
 
 R2-F current candidate: worksheet scope explicitly distinguishes all from selected; selecting none blocks import. Reinspection preserves deliberate choices, stale source results are ignored, and invalid mapping JSON cannot reuse an earlier mapping. Isolated PostgreSQL18.4/TLS, migrations, Chromium import/export and actual restart persistence are now verified on Windows. Private-source and hosted acceptance remain unavailable. See [R2-F evidence and remaining gates](docs/R2F_CLOSURE.md); the earlier R2 results below are historical.
 
