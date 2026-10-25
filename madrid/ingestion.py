@@ -125,7 +125,7 @@ def columns(cells: list[str], spec: ImportSpec) -> dict[str, int]:
 
 
 def normalize(
-    raw: list[dict[str, Any]], spec: ImportSpec
+    raw: list[dict[str, Any]], spec: ImportSpec, *, source_subtotals_checked: bool = False
 ) -> tuple[list[dict[str, Any]], list[str], dict[str, Any]]:
     if raw and raw[0].get("adapter") == "arabic_pos_v1":
         from madrid.pos_contract import normalize_pos
@@ -134,6 +134,7 @@ def normalize(
     records: list[dict[str, Any]] = []
     issues: list[str] = []
     mapping: dict[str, int] = {}
+    source_columns: dict[str, str] = {}
     pending: dict[str, Any] | None = None
     total_rows: list[dict[str, Any]] = []
     current_sheet: str | None = None
@@ -141,6 +142,7 @@ def normalize(
         sheet = row["location"].get("sheet")
         if sheet != current_sheet:
             mapping = {}
+            source_columns = {}
             pending = None
             current_sheet = sheet
         cells = row["cells"]
@@ -152,8 +154,12 @@ def normalize(
             "data": {},
             "issues": [],
         }
+        if row.get("formula"):
+            entry["issues"].append("workbook_formula_requires_review")
         if REQUIRED[spec.report_type] <= candidate.keys():
             mapping = candidate
+            source_columns = {field: cells[index] for field, index in mapping.items()}
+            pending = None
             entry["kind"] = "header"
             records.append(entry)
             continue
@@ -168,8 +174,13 @@ def normalize(
             re.fullmatch(r"(total|grand total|subtotal|الإجمالي|الاجمالي|المجموع|إجمالي)(\s+.*)?", c)
             for c in labels
         ):
-            entry["kind"] = "subtotal" if any(c.startswith("subtotal") for c in labels) else "total"
+            entry["kind"] = (
+                "subtotal"
+                if any(c.startswith(("subtotal", "المجموع الفرعي", "إجمالي فرعي")) for c in labels)
+                else "total"
+            )
             entry["data"] = data
+            pending = None
             total_rows.append(entry)
             records.append(entry)
             continue
@@ -182,8 +193,7 @@ def normalize(
                 records.append(entry)
                 continue
         entry["data"] = data
-        if row.get("formula"):
-            entry["issues"].append("workbook_formula_requires_review")
+        entry["source_columns"] = dict(source_columns)
         if mapping.get("barcode") in row.get("numeric_columns", []):
             entry["issues"].append("numeric_barcode_requires_text_source")
         records.append(entry)
@@ -193,6 +203,7 @@ def normalize(
     identities: set[str] = set()
     for record in detail:
         data = record["data"]
+        validation_field = "barcode" if spec.report_type not in {"expenses", "targets"} else ""
         try:
             if spec.report_type not in {"expenses", "targets"}:
                 data["barcode"] = code_value(data.get("barcode", ""))
@@ -201,16 +212,20 @@ def normalize(
                         raise ValueError("duplicate_balance_or_cost_identity_requires_review")
                     identities.add(data["barcode"])
             for field in REQUIRED[spec.report_type]:
+                validation_field = field
                 if not str(data.get(field, "")).strip():
                     raise ValueError("missing_" + field)
             for field in NUMBERS & data.keys():
+                validation_field = field
                 if data[field] != "":
                     data[field] = str(decimal_value(data[field]))
                 else:
                     del data[field]
             for field in ["date", "introduced"]:
                 if data.get(field):
+                    validation_field = field
                     data[field] = date_value(data[field])
+            validation_field = "date"
             if data.get("date") and not spec.start.isoformat() <= data["date"] <= spec.end.isoformat():
                 raise ValueError("row_outside_report_period")
             if spec.report_type == "snapshot":
@@ -258,6 +273,34 @@ def normalize(
                     raise ValueError("verified_nonnegative_financial_input_required")
         except (ValueError, KeyError) as exc:
             record["issues"].append(str(exc).strip("'"))
+            # Only field-level parsing failures claim an exact offending field.
+            # Relationship/semantic issues retain the complete row as evidence.
+            code = str(exc).strip("'")
+            if (
+                code.startswith("missing_")
+                or code
+                in {
+                    "invalid_decimal",
+                    "ambiguous_number_separator",
+                    "number_out_of_range",
+                    "row_outside_report_period",
+                    "duplicate_balance_or_cost_identity_requires_review",
+                }
+                or "date" in code
+            ):
+                record["diagnostics"] = [
+                    {
+                        "field": validation_field,
+                        "column": record.get("source_columns", {}).get(validation_field, validation_field),
+                        "value": str(data.get(validation_field, "")),
+                        "expected": "ISO date or day/month/year"
+                        if validation_field in {"date", "introduced"}
+                        else "finite decimal; max 6 decimal places; no ambiguous separators"
+                        if validation_field in NUMBERS
+                        else "nonempty unique text barcode",
+                        "issue": code,
+                    }
+                ]
     if not detail:
         issues.append("no_detail_records")
     if not spec.complete:
@@ -300,6 +343,15 @@ def normalize(
             pass
     if primary not in expected and source_primary and source_primary.keys() == sheet_totals.keys():
         expected[primary] = str(sum(source_primary.values(), Decimal(0)))
+    source_net: dict[str | None, Decimal] = {}
+    for sheet, footer in sheet_footers.items():
+        if footer.get("net"):
+            try:
+                source_net[sheet] = decimal_value(footer["net"])
+            except ValueError:
+                issues.append("invalid_source_footer_number:net")
+    if "net" not in expected and source_net and source_net.keys() == sheet_totals.keys():
+        expected["net"] = str(sum(source_net.values(), Decimal(0)))
     if primary not in expected:
         issues.append("independent_source_total_required:" + primary)
     if any("net" in r["data"] for r in detail) and "net" not in expected:
@@ -332,6 +384,39 @@ def normalize(
                     }
                 except ValueError:
                     issues.append("invalid_source_footer_number:" + field)
+    # Subtotals describe the preceding group since the previous subtotal in that
+    # worksheet. Unknown nested/cumulative layouts require a dedicated adapter.
+    segments: dict[str | None, dict[str, Decimal]] = {}
+    for record in records:
+        sheet = record["raw"]["location"].get("sheet")
+        segment = segments.setdefault(sheet, {})
+        if record["kind"] == "detail" and not record["issues"]:
+            for field in (NUMBERS | {"net_quantity"}) - {"running_balance", "in_stock_days"}:
+                if record["data"].get(field):
+                    segment[field] = segment.get(field, Decimal(0)) + decimal_value(record["data"][field])
+        elif record["kind"] == "subtotal" and not source_subtotals_checked:
+            location = record["raw"]["location"]
+            locator = ",".join(f"{key}={value}" for key, value in location.items())
+            observed = False
+            for field in segment.keys() & record["data"].keys():
+                if not record["data"][field]:
+                    continue
+                try:
+                    value = decimal_value(record["data"][field])
+                except ValueError:
+                    issues.append("invalid_source_footer_number:" + field)
+                    continue
+                observed = True
+                checks[f"source_subtotal:{locator}:{field}"] = {
+                    "expected": str(value),
+                    "actual": str(segment[field]),
+                    "matches": value == segment[field],
+                }
+            if not observed:
+                issues.append("subtotal_requires_numeric_evidence")
+            segments[sheet] = {}
+    for check in checks.values():
+        check["difference"] = str(decimal_value(check["actual"]) - decimal_value(check["expected"]))
     if any(not check["matches"] for check in checks.values()):
         issues.append("source_total_mismatch")
     return (
@@ -370,6 +455,7 @@ def extract_source(file: Path, suffix: str, options: dict[str, Any]) -> subproce
         [sys.executable, "-m", "madrid.extraction"],
         input=json.dumps({"path": str(file), "suffix": suffix, "options": options}),
         text=True,
+        encoding="utf-8",
         capture_output=True,
         timeout=35,
     )

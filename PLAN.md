@@ -1,5 +1,17 @@
 # Delivery status
 
+## R2-G local acceptance — 2026-10-25
+
+`PASS_MADRID_R2G_HOSTED_FUNCTIONAL_VERIFIED`: actual inventory/sales/movement originals passed isolated local source-scoped acceptance, analysis, all3 exports, restart, idempotence and audited rollback. Combined Chromium5/5 exited0. Historical full-field golden is unavailable; the authorized alternative's exact scope is documented in [R2-G acceptance](docs/R2G_ACCEPTANCE.md). Runtime/tests remain unchanged from `2fc5d3e99f145ce3a21533a0a6706ad2543f6981`; PostgreSQL evidence was preserved without rerun. Owner consent restored Vercel access. Protected Preview `dpl_DDR2eQVKoeNWxckmBfqdVpPsesNj` built from `d7e78664f28c793824c75e15842d00d84f3a5904` is READY;42 remote source digests match. Owner login/data confirmation and independent runtime logs establish read-only hosted health/authenticated reads/current assets. Stable alias now points to it after verification; Hobby, SSO, database environment linkage and prior deployment are retained. Agent-controlled hosted browser and live private-report import/export are explicitly NOT_RUN. Same Draft PR#1, no Production deployment or merge.
+
+## R2-F closure — 2026-10-25
+
+`PARTIAL_MADRID_R2F_FUNCTIONAL_DELIVERY`: explicit worksheet scope, consistent inspection options, preserved reinspection choices and invalid/stale mapping protection are delivered. Final backend103 passed/7 private-source skips; all9 isolated PostgreSQL cases ran with verified TLS, migration001→002 and real server/browser restart acceptance. UI13 passed; all5 browser journeys have successful evidence across the combined run and one corrected focused rerun. Actual private reports remain `NOT_RUN_PRIVATE_SOURCE_UNAVAILABLE`; Vercel team authorization remains403. See [R2-F closure evidence](docs/R2F_CLOSURE.md). Same branch and Draft PR#1; no merge or deployment.
+
+## R2 candidate — 2026-10-25
+
+`PARTIAL_MADRID_R2_FUNCTIONAL_DELIVERY`: complete local improvements to inspection/mapping, generic subtotal and monetary-footer reconciliation, XLS dates, Windows parser/PDF/backup operation and session feedback. Backend93 passed/15 explicit external-input skips; UI10 passed; browser4 passed. See [current delivery and limitations](docs/R2_DELIVERY.md). Private-source acceptance and PostgreSQL integration in this Windows checkout remain unverified. Vercel team access returned403; the existing Preview, database, owner and alias were left untouched. This is a review candidate, not full R2/private-source or hosted acceptance.
+
 Authorization covers complete MVP execution without phase gates, and the user subsequently requested Vercel deployment and complete hosting. The user clarified private personal testing on Hobby only, with no Pro activation. The owner now explicitly authorizes publishing the complete application source, tests and documentation to the existing `sabere342-ai/analyse` GitHub repository. Private-data uploads, credentials, paid services and destruction of originals remain unauthorized.
 
 1. DONE — Six core documents, locked compatible development environment, authenticated Arabic RTL UI and static-only PWA.

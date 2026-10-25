@@ -29,6 +29,9 @@ import type {
   Rules,
 } from "./api";
 import "./style.css";
+import { ImportInspection } from "./ImportInspection";
+import { parseMapping, selectedSheets } from "./import-options";
+import type { ParserOptions, SheetMode } from "./import-options";
 
 type Page =
   "overview" | "inventory" | "representatives" | "imports" | "settings";
@@ -65,6 +68,24 @@ function App() {
     [applied, setApplied] = useState<AnalysisFilters | null>(null);
   const reportRequest = useRef(0);
   const datasetRequest = useRef(0);
+  useEffect(() => {
+    const expired = () => {
+      reportRequest.current += 1;
+      datasetRequest.current += 1;
+      setAuth((current) =>
+        current ? { ...current, authenticated: false } : current,
+      );
+      setReport(null);
+      setBatch(null);
+      setBatches([]);
+      setApplied(null);
+      setBusy(false);
+      setNotice("");
+      setError("انتهت الجلسة؛ سجّل الدخول لمتابعة العمل");
+    };
+    window.addEventListener("madrid:session-expired", expired);
+    return () => window.removeEventListener("madrid:session-expired", expired);
+  }, []);
   const fail = useCallback(
     (e: unknown) =>
       setError(e instanceof Error ? e.message : "حصل خطأ؛ حاول تاني"),
@@ -172,6 +193,12 @@ function App() {
   async function logout() {
     try {
       await api("/auth/logout", { method: "POST" });
+      reportRequest.current += 1;
+      datasetRequest.current += 1;
+      setError("");
+      setNotice("");
+      setApplied(null);
+      setBusy(false);
       setAuth({
         initialized: true,
         authenticated: false,
@@ -181,8 +208,10 @@ function App() {
       setReport(null);
       setBatch(null);
       setBatches([]);
-    } catch (e) {
-      fail(e);
+    } catch {
+      setError(
+        "تعذر تأكيد تسجيل الخروج من الخادم. لو الاتصال انقطع فالجلسة قد تظل نشطة؛ حاول تسجيل الخروج مرة أخرى",
+      );
     }
   }
   async function review(id: string) {
@@ -1083,6 +1112,32 @@ export function Imports({
     [uploadError, setUploadError] = useState(""),
     [importStart, setImportStart] = useState(defaults.end),
     [importEnd, setImportEnd] = useState(defaults.end);
+  const [mapping, setMapping] = useState<Record<string, string>>({});
+  const [mappingText, setMappingText] = useState("{}");
+  const [sheets, setSheets] = useState("");
+  const [sheetMode, setSheetMode] = useState<SheetMode>("all");
+  const [parserOptions, setParserOptions] = useState<ParserOptions>({
+    encoding: "utf-8-sig",
+    delimiter: "auto",
+    pdf_profile: "auto",
+  });
+  const [inspectionReady, setInspectionReady] = useState(false);
+  const [sourceDates, setSourceDates] = useState(true);
+  let mappingIssue = "";
+  try {
+    parseMapping(mappingText);
+  } catch (e) {
+    mappingIssue = e instanceof Error ? e.message : "تعيين الأعمدة غير صالح";
+  }
+  const clearMapping = () => {
+    setMapping({});
+    setMappingText("{}");
+  };
+  function changeParser(field: keyof ParserOptions, value: string) {
+    setParserOptions((current) => ({ ...current, [field]: value }));
+    clearMapping();
+    setInspectionReady(false);
+  }
   useEffect(() => {
     void api<Batch[]>("/batches").then(setList).catch(fail);
   }, [batch, fail]);
@@ -1108,12 +1163,12 @@ export function Imports({
     setUploadError("");
     try {
       const f = new FormData(event.currentTarget);
-      let column_map = {};
-      try {
-        column_map = JSON.parse(String(f.get("mapping") || "{}"));
-      } catch {
-        throw new Error("تعيين الأعمدة لازم يكون JSON صحيح");
-      }
+      const column_map = parseMapping(String(f.get("mapping") || "{}"));
+      const selected = selectedSheets(sheets, sheetMode);
+      if (!inspectionReady)
+        throw new Error(
+          "أعد فحص الملف بالخيارات والأوراق الحالية قبل تجهيز المراجعة",
+        );
       const expected: Record<string, string> = {};
       const total = String(f.get("expected") || "");
       const primary = {
@@ -1138,13 +1193,9 @@ export function Imports({
         financial_verified: f.has("financial_verified"),
         reservation_verified: f.has("reservation_verified"),
         availability_verified: f.has("availability_verified"),
-        encoding: f.get("encoding"),
-        delimiter: f.get("delimiter"),
-        sheets: String(f.get("sheets") || "")
-          .split(/\r?\n/)
-          .map((name) => name.trim())
-          .filter(Boolean),
-        pdf_profile: f.get("pdf_profile"),
+        ...parserOptions,
+        sheet_mode: sheetMode,
+        sheets: selected,
         source_dates: f.has("source_dates") ? "report" : "manual",
         sales_coverage: f.get("sales_coverage") || "store",
         note: f.get("note"),
@@ -1188,6 +1239,8 @@ export function Imports({
                 onChange={(e) => {
                   const next = e.target.value;
                   setType(next);
+                  clearMapping();
+                  setInspectionReady(false);
                   setImportStart(
                     next === "snapshot" || next === "costs"
                       ? defaults.end
@@ -1295,29 +1348,45 @@ export function Imports({
               </small>
             </label>
           )}
-          <div className="upload-box">
-            <ArrowUpFromLine size={28} />
-            <label>
-              اختار ملف التقرير
-              <input
-                name="file"
-                type="file"
-                accept=".pdf,.csv,.xls,.xlsx"
-                required
-              />
-            </label>
-            <small>
-              PDF / CSV / XLS / XLSX · حد {maxUploadBytes / 1024 / 1024} MB ·
-              PDF بجدول نصي قابل للاستخراج
-            </small>
-          </div>
+          <ImportInspection
+            maxBytes={maxUploadBytes}
+            type={type}
+            mapping={mapping}
+            onMapping={(next) => {
+              setMapping(next);
+              setMappingText(JSON.stringify(next));
+            }}
+            sheets={sheets}
+            onSheets={setSheets}
+            sheetMode={sheetMode}
+            onSheetMode={setSheetMode}
+            options={parserOptions}
+            onReady={setInspectionReady}
+            onSourceChange={() => {
+              clearMapping();
+              setInspectionReady(false);
+            }}
+            onDetected={(kind, period) => {
+              if (kind !== type) clearMapping();
+              setType(kind);
+              if (period && sourceDates) {
+                setImportStart(period.start);
+                setImportEnd(period.end);
+              }
+            }}
+          />
           <p className="hint">
             الجرد والتكاليف: تاريخ البداية والنهاية لازم يكونوا نفس اليوم. تنسيق
             تقارير الجرد والمندوبين والحركة المعاير بيتعرف تلقائيًا؛ راجع الصفوف
             ومطابقة الإجماليات قبل القبول.
           </p>
           <label>
-            <input type="checkbox" name="source_dates" defaultChecked />
+            <input
+              type="checkbox"
+              name="source_dates"
+              checked={sourceDates}
+              onChange={(event) => setSourceDates(event.target.checked)}
+            />
             قراءة تاريخ أو فترة التقرير تلقائيًا من PDF المعروف
             <small>
               التنسيقات المعروفة تستخدم التاريخ المطبوع وتعرضه للمراجعة. Excel
@@ -1327,11 +1396,17 @@ export function Imports({
           <details>
             <summary>خيارات الأعمدة والترميز</summary>
             <label>
-              أوراق Excel المطلوبة (اختياري)
+              أسماء أوراق Excel المختارة يدويًا
               <textarea
                 name="sheets"
+                value={sheets}
+                disabled={sheetMode === "all"}
+                onChange={(event) => {
+                  setSheets(event.target.value);
+                  setInspectionReady(false);
+                }}
                 dir="auto"
-                placeholder="اسم ورقة واحد في كل سطر؛ اتركه فارغًا لقراءة كل الأوراق"
+                placeholder="في وضع الأوراق المختارة: اسم ورقة واحد في كل سطر"
               />
               <small>
                 اكتب الاسم كما يظهر في Excel لاختيار أوراق البيانات فقط. كل ورقة
@@ -1342,7 +1417,13 @@ export function Imports({
             <div className="form-grid">
               <label>
                 تنسيق PDF
-                <select name="pdf_profile" defaultValue="auto">
+                <select
+                  name="pdf_profile"
+                  value={parserOptions.pdf_profile}
+                  onChange={(event) =>
+                    changeParser("pdf_profile", event.target.value)
+                  }
+                >
                   <option value="auto">اكتشاف تلقائي</option>
                   <option value="arabic_pos_v1">
                     تقارير POS العربية المعايرة
@@ -1352,14 +1433,26 @@ export function Imports({
               </label>
               <label>
                 ترميز CSV
-                <select name="encoding" defaultValue="utf-8-sig">
+                <select
+                  name="encoding"
+                  value={parserOptions.encoding}
+                  onChange={(event) =>
+                    changeParser("encoding", event.target.value)
+                  }
+                >
                   <option value="utf-8-sig">UTF-8</option>
                   <option value="cp1256">Windows Arabic</option>
                 </select>
               </label>
               <label>
                 الفاصل
-                <select name="delimiter" defaultValue="auto">
+                <select
+                  name="delimiter"
+                  value={parserOptions.delimiter}
+                  onChange={(event) =>
+                    changeParser("delimiter", event.target.value)
+                  }
+                >
                   <option value="auto">اكتشاف تلقائي</option>
                   <option value=",">Comma</option>
                   <option value=";">Semicolon</option>
@@ -1373,8 +1466,21 @@ export function Imports({
                 name="mapping"
                 dir="ltr"
                 placeholder={'{"barcode":"كود الصنف","quantity":"الرصيد"}'}
-                defaultValue="{}"
+                value={mappingText}
+                onChange={(event) => {
+                  setMappingText(event.target.value);
+                  try {
+                    setMapping(parseMapping(event.target.value));
+                  } catch {
+                    setMapping({});
+                  }
+                }}
               />
+              {mappingIssue && (
+                <small role="alert">
+                  {mappingIssue}؛ صحح النص قبل الاستيراد.
+                </small>
+              )}
             </label>
             <small>
               معاني الأعمدة والأشكال المدعومة موضحة في القوالب. لا يتم استنتاج
@@ -1408,7 +1514,17 @@ export function Imports({
             </label>
           </div>
           <div className="form-actions">
-            <button className="primary" disabled={uploading || busy}>
+            <button
+              className="primary"
+              disabled={
+                uploading ||
+                busy ||
+                !inspectionReady ||
+                !!mappingIssue ||
+                (sheetMode === "selected" &&
+                  !sheets.split(/\r?\n/).some(Boolean))
+              }
+            >
               {uploading ? "جاري الاستخراج…" : "استخراج وتجهيز المراجعة"}
             </button>
             <a className="secondary" href={`/api/templates/${type}`} download>
@@ -1550,6 +1666,7 @@ export function Imports({
                   <th>المؤشر</th>
                   <th>المصدر</th>
                   <th>مجموع الصفوف</th>
+                  <th>الفرق (الصفوف − المصدر)</th>
                   <th>المطابقة</th>
                 </tr>
               </thead>
@@ -1559,6 +1676,7 @@ export function Imports({
                     <td>{k}</td>
                     <td>{c.expected}</td>
                     <td>{c.actual}</td>
+                    <td>{c.difference ?? "—"}</td>
                     <td>{c.matches ? "✓ مطابق" : "غير مطابق"}</td>
                   </tr>
                 ))}
@@ -1601,6 +1719,15 @@ export function Imports({
                         <td>
                           {row.issues.map((i) => (
                             <p key={i}>{message(i)}</p>
+                          ))}
+                          {row.diagnostics?.map((diagnostic, index) => (
+                            <p key={index}>
+                              عمود <bdi>{diagnostic.column}</bdi> · القيمة:{" "}
+                              <bdi>{diagnostic.value || "فارغة"}</bdi>
+                              <br />
+                              المطلوب: <bdi>{diagnostic.expected}</bdi>؛ صحح
+                              المصدر أو تعيين الأعمدة وأعد الرفع.
+                            </p>
                           ))}
                         </td>
                       </tr>

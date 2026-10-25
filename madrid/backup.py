@@ -10,6 +10,7 @@ import os
 import sqlite3
 import tempfile
 import zipfile
+from contextlib import closing
 from getpass import getpass
 from pathlib import Path
 
@@ -35,13 +36,13 @@ def create_backup(directory: Path, password: str) -> bytes:
     # VACUUM INTO uses a consistent snapshot, without copying an active WAL database.
     snapshot = directory / ("backup-" + os.urandom(8).hex() + ".sqlite3")
     try:
-        with sqlite3.connect(db) as connection:
+        with closing(sqlite3.connect(db)) as connection, connection:
             connection.execute("VACUUM INTO ?", (str(snapshot),))
         buffer = io.BytesIO()
         hashes = {}
         with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
             entries = [(snapshot, "madrid.sqlite3")]
-            with sqlite3.connect(snapshot) as captured:
+            with closing(sqlite3.connect(snapshot)) as captured:
                 sources = captured.execute("SELECT checksum, filename, status FROM batches").fetchall()
             seen = set()
             for checksum, filename, status in sources:
@@ -95,7 +96,7 @@ def restore_backup(content: bytes, destination: Path, password: str) -> dict[str
             private_dir(target.parent)
             target.write_bytes(archive.read(name))
             target.chmod(0o600)
-    with sqlite3.connect(destination / "madrid.sqlite3") as connection:
+    with closing(sqlite3.connect(destination / "madrid.sqlite3")) as connection, connection:
         if connection.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
             raise ValueError("restored_database_integrity_failure")
         connection.execute("DELETE FROM sessions")

@@ -1,13 +1,195 @@
 import { test, expect } from "@playwright/test";
+import { execFileSync } from "node:child_process";
+import { mkdirSync } from "node:fs";
+import { dirname, resolve } from "node:path";
 const password = "synthetic-browser-test-only";
+test("R2F worksheet mode, reinspection and mapping match the imported workbook", async ({
+  page,
+}, info) => {
+  const file = info.outputPath("synthetic-sheets.xlsx");
+  mkdirSync(dirname(file), { recursive: true });
+  const python = resolve(
+    "..",
+    ".venv",
+    process.platform === "win32" ? "Scripts/python.exe" : "bin/python",
+  );
+  execFileSync(python, [
+    "-c",
+    "from openpyxl import Workbook; import sys; b=Workbook(); s=b.active; s.title='First'; [s.append(r) for r in [['Identifier','Description','Balance'],['000011','First item','2'],['TOTAL','','2']]]; s=b.create_sheet('Second'); [s.append(r) for r in [['quantity','barcode','name'],['99','000022','Second item'],['99','','TOTAL']]]; b.save(sys.argv[1])",
+    file,
+  ]);
+  await page.goto("/");
+  await expect(
+    page.getByRole("button", { name: /إنشاء الحساب المحلي|دخول مساحة العمل/ }),
+  ).toBeVisible();
+  const setup = page.getByLabel("عيّن كلمة مرور المالك");
+  if (await setup.count()) {
+    await setup.fill(password);
+    await page.getByRole("button", { name: "إنشاء الحساب المحلي" }).click();
+  } else {
+    await page.getByLabel("كلمة المرور", { exact: true }).fill(password);
+    await page.getByRole("button", { name: "دخول مساحة العمل" }).click();
+  }
+  await page
+    .getByRole("button", { name: "استيراد ومراجعة", exact: true })
+    .click();
+  await page.locator('input[name="scope"]').fill("r2f-sheets");
+  await page.locator('input[name="start"]').fill("2022-01-31");
+  await page.locator('input[name="file"]').setInputFiles(file);
+  await expect(page.getByLabel("كل أوراق الملف")).toBeChecked();
+  await expect(page.getByLabel("قراءة ورقة First")).toBeChecked();
+  await expect(page.getByLabel("قراءة ورقة Second")).toBeChecked();
+  await page.getByLabel("أوراق مختارة فقط").check();
+  await page.getByLabel("قراءة ورقة First").check();
+  await page.getByLabel("قراءة ورقة First").uncheck();
+  const submit = page.getByRole("button", { name: "استخراج وتجهيز المراجعة" });
+  await expect(submit).toBeDisabled();
+  await expect(page.getByLabel("أوراق مختارة فقط")).toBeChecked();
+  await page.getByLabel("قراءة ورقة First").check();
+  const reinspect = page.getByRole("button", {
+    name: "إعادة فحص الملف بالخيارات الحالية",
+  });
+  await reinspect.click();
+  const inspection = page.getByRole("region", { name: "فحص الملف" });
+  await expect(inspection.getByText("000011", { exact: true })).toBeVisible();
+  await expect(inspection.getByText("000022", { exact: true })).toHaveCount(0);
+  await inspection.getByLabel("تعيين الباركود").selectOption("Identifier");
+  await inspection.getByLabel("تعيين اسم الصنف").selectOption("Description");
+  await inspection.getByLabel("تعيين الكمية").selectOption("Balance");
+  await reinspect.click();
+  await expect(page.getByLabel("قراءة ورقة First")).toBeChecked();
+  await expect(inspection.getByLabel("تعيين الباركود")).toHaveValue(
+    "Identifier",
+  );
+  await page.getByText("خيارات الأعمدة والترميز", { exact: true }).click();
+  const mapping = page.locator('textarea[name="mapping"]');
+  await mapping.fill('{"barcode":');
+  await expect(submit).toBeDisabled();
+  await expect(inspection.getByLabel("تعيين الباركود")).toHaveValue("");
+  await mapping.fill(
+    '{"barcode":"Identifier","name":"Description","quantity":"Balance"}',
+  );
+  await page.locator('input[name="complete"]').check();
+  await submit.click();
+  await expect(
+    page.getByRole("button", { name: "قبول البيانات" }),
+  ).toBeEnabled();
+  const staged = (await (await page.request.get("/api/batches")).json()).find(
+    (item: { scope: string }) => item.scope === "r2f-sheets",
+  );
+  const persisted = await (
+    await page.request.get(`/api/batches/${staged.id}`)
+  ).json();
+  expect(persisted.metadata.sheet_mode).toBe("selected");
+  expect(persisted.metadata.sheets).toEqual(["First"]);
+  expect(
+    persisted.rows
+      .filter((row: { kind: string }) => row.kind === "detail")
+      .map(
+        (row: { raw: { location: { sheet: string } } }) =>
+          row.raw.location.sheet,
+      ),
+  ).toEqual(["First"]);
+  await page.getByRole("button", { name: "قبول البيانات" }).click();
+  await page.getByRole("button", { name: "نظرة عامة", exact: true }).click();
+  await expect(
+    page.locator(".metric-card").filter({ hasText: "رصيد المخزون" }),
+  ).toContainText("2.00");
+  const batches = await (await page.request.get("/api/batches")).json();
+  const batch = batches.find(
+    (item: { scope: string }) => item.scope === "r2f-sheets",
+  );
+  await page.request.post(`/api/batches/${batch.id}/action`, {
+    headers: { "X-Requested-With": "Madrid" },
+    data: { action: "rollback", reason: "isolated worksheet selection check" },
+  });
+});
+test("R2 unknown CSV is inspected, mapped, reconciled, accepted and remains scoped after reload", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await expect(
+    page.getByRole("button", { name: /إنشاء الحساب المحلي|دخول مساحة العمل/ }),
+  ).toBeVisible();
+  const setup = page.getByLabel("عيّن كلمة مرور المالك");
+  if (await setup.count()) {
+    await setup.fill(password);
+    await page.getByRole("button", { name: "إنشاء الحساب المحلي" }).click();
+  } else {
+    await page.getByLabel("كلمة المرور", { exact: true }).fill(password);
+    await page.getByRole("button", { name: "دخول مساحة العمل" }).click();
+  }
+  await page
+    .getByRole("button", { name: "استيراد ومراجعة", exact: true })
+    .click();
+  await page.locator('input[name="start"]').fill("2021-05-31");
+  const batchesBefore = (await (await page.request.get("/api/batches")).json())
+    .length;
+  await page.locator('input[name="scope"]').fill("r2-mapping");
+  await page.locator('input[name="file"]').setInputFiles({
+    name: "unknown.csv",
+    mimeType: "text/csv",
+    buffer: Buffer.from(
+      'Identifier,Description,Balance\n000077,"تي شيرت, Basic",7\nTOTAL,,7\n',
+    ),
+  });
+  const inspection = page.getByRole("region", { name: "فحص الملف" });
+  await expect(
+    inspection.getByRole("heading", { name: /يحتاج تعيين/ }),
+  ).toBeVisible();
+  await expect(inspection.getByText("000077", { exact: true })).toBeVisible();
+  expect((await (await page.request.get("/api/batches")).json()).length).toBe(
+    batchesBefore,
+  );
+  await inspection.getByLabel("تعيين الباركود").selectOption("Identifier");
+  await inspection.getByLabel("تعيين اسم الصنف").selectOption("Description");
+  await inspection.getByLabel("تعيين الكمية").selectOption("Balance");
+  await page.locator('input[name="complete"]').check();
+  await page.getByRole("button", { name: "استخراج وتجهيز المراجعة" }).click();
+  await expect(
+    page.getByRole("button", { name: "قبول البيانات" }),
+  ).toBeEnabled();
+  await page.getByRole("button", { name: "قبول البيانات" }).click();
+  await page.getByRole("button", { name: "نظرة عامة", exact: true }).click();
+  await expect(
+    page.locator(".metric-card").filter({ hasText: "رصيد المخزون" }),
+  ).toContainText("7.00");
+  await page.reload();
+  await expect(
+    page.locator(".metric-card").filter({ hasText: "رصيد المخزون" }),
+  ).toContainText("7.00");
+  const csv = await page.request.get(
+    "/api/exports/csv?start=2021-05-31&end=2021-05-31&stock_asof=2021-05-31&scope=r2-mapping",
+  );
+  expect(csv.ok()).toBeTruthy();
+  expect(await csv.text()).toContain("000077");
+  // Remove contribution through the public audited action so subsequent journeys start empty.
+  const batches = await (await page.request.get("/api/batches")).json();
+  const batch = batches.find(
+    (item: { scope: string }) => item.scope === "r2-mapping",
+  );
+  await page.request.post(`/api/batches/${batch.id}/action`, {
+    headers: { "X-Requested-With": "Madrid" },
+    data: { action: "rollback", reason: "isolated R2 browser verification" },
+  });
+});
 test("owner reviews import, reconciles, accepts, reuploads, exports, rolls back and uses mobile PWA", async ({
   page,
 }) => {
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(e.message));
   await page.goto("/");
-  await page.getByLabel("عيّن كلمة مرور المالك").fill(password);
-  await page.getByRole("button", { name: "إنشاء الحساب المحلي" }).click();
+  await expect(
+    page.getByRole("button", { name: /إنشاء الحساب المحلي|دخول مساحة العمل/ }),
+  ).toBeVisible();
+  const setup = page.getByLabel("عيّن كلمة مرور المالك");
+  if (await setup.count()) {
+    await setup.fill(password);
+    await page.getByRole("button", { name: "إنشاء الحساب المحلي" }).click();
+  } else {
+    await page.getByLabel("كلمة المرور", { exact: true }).fill(password);
+    await page.getByRole("button", { name: "دخول مساحة العمل" }).click();
+  }
   await expect(
     page.getByRole("heading", { name: "الصورة الكاملة لمحلك" }),
   ).toBeVisible();
@@ -55,12 +237,35 @@ test("owner reviews import, reconciles, accepts, reuploads, exports, rolls back 
   await page
     .getByRole("button", { name: "استيراد ومراجعة", exact: true })
     .click();
+  // Navigation remounts the form. Actually select the identical source again;
+  // the persisted accepted review alone is not proof of a successful reupload.
+  await page
+    .locator('input[name="file"]')
+    .setInputFiles({
+      name: "synthetic.csv",
+      mimeType: "text/csv",
+      buffer: Buffer.from(csv),
+    });
+  await page.locator('input[name="complete"]').check();
+  await page.locator('input[name="reservation_verified"]').check();
+  const reupload = page.waitForResponse(
+    (response) =>
+      response.url().endsWith("/api/imports") &&
+      response.request().method() === "POST",
+  );
   await page.getByRole("button", { name: "استخراج وتجهيز المراجعة" }).click();
+  const repeated = await reupload;
+  expect(repeated.ok()).toBeTruthy();
+  expect((await repeated.json()).status).toBe("accepted");
   await expect(
     page.getByRole("button", { name: "تراجع موثق عن الدفعة" }),
   ).toBeVisible();
   const list = await page.request.get("/api/batches");
-  expect((await list.json()).length).toBe(1);
+  expect(
+    (await list.json()).filter(
+      (batch: { scope: string }) => batch.scope === "store",
+    ).length,
+  ).toBe(1);
   const snapshot = await page.request.get(
     "/api/exports/pdf?start=2026-10-01&end=2026-10-24",
   );
@@ -121,7 +326,9 @@ test("PWA installability is verified in a normal persistent profile", async ({
   const context = await playwright.chromium.launchPersistentContext(
     testInfo.outputPath("pwa-profile"),
     {
-      executablePath: process.env.MADRID_BROWSER || "/usr/bin/chromium",
+      ...(process.env.MADRID_BROWSER
+        ? { executablePath: process.env.MADRID_BROWSER }
+        : {}),
       headless: true,
     },
   );

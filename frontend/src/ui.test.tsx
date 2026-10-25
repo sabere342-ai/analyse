@@ -31,6 +31,27 @@ function emptyReport(): Report {
   };
 }
 describe("honest financial display", () => {
+  it("announces an expired private API session but preserves invalid-login feedback", async () => {
+    const expired = vi.fn();
+    window.addEventListener("madrid:session-expired", expired);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: false,
+        status: 401,
+        json: async () => ({ detail: "authentication_required" }),
+      }),
+    );
+    try {
+      await expect(api("/batches")).rejects.toThrow("سجّل الدخول");
+      expect(expired).toHaveBeenCalledTimes(1);
+      await expect(api("/auth/login", { method: "POST" })).rejects.toThrow();
+      expect(expired).toHaveBeenCalledTimes(1);
+    } finally {
+      window.removeEventListener("madrid:session-expired", expired);
+      vi.unstubAllGlobals();
+    }
+  });
   it("chooses accepted report dates and keeps the stock date independent", () => {
     const batch = (
       report_type: string,
@@ -224,11 +245,31 @@ describe("honest financial display", () => {
     vi.unstubAllGlobals();
   });
   it("sends selected Excel worksheet names with the import request", async () => {
-    const fetcher = vi.fn().mockImplementation((_url, options) =>
+    const fetcher = vi.fn().mockImplementation((url, options) =>
       Promise.resolve({
         ok: true,
         json: async () =>
-          options?.method === "POST" ? { id: "sheet-review" } : [],
+          url === "/api/imports/inspect"
+            ? {
+                filename: "sheets.xlsx",
+                size: 100,
+                format: "xlsx",
+                status: "RECOGNIZED",
+                issues: [],
+                pages: 0,
+                worksheet_names: ["Stock", "Second"],
+                sheets: ["Stock", "Second"].map((name) => ({
+                  name,
+                  report_type: "snapshot",
+                  columns: ["barcode", "name", "quantity"],
+                  preview: [],
+                  rows: 3,
+                  status: "RECOGNIZED",
+                })),
+              }
+            : options?.method === "POST"
+              ? { id: "sheet-review" }
+              : [],
       }),
     );
     vi.stubGlobal("fetch", fetcher);
@@ -247,9 +288,27 @@ describe("honest financial display", () => {
           maxUploadBytes={4194304}
         />,
       );
-      fireEvent.change(screen.getByLabelText(/أوراق Excel المطلوبة/), {
-        target: { value: "Stock\n\n Second " },
+      fireEvent.change(screen.getByLabelText("اختار ملف التقرير"), {
+        target: { files: [new File(["synthetic"], "sheets.xlsx")] },
       });
+      await screen.findByLabelText("أوراق مختارة فقط");
+      fireEvent.click(screen.getByLabelText("أوراق مختارة فقط"));
+      fireEvent.change(
+        screen.getByLabelText(/أسماء أوراق Excel المختارة يدويًا/),
+        {
+          target: { value: "Stock\nSecond" },
+        },
+      );
+      fireEvent.click(
+        screen.getByRole("button", {
+          name: "إعادة فحص الملف بالخيارات الحالية",
+        }),
+      );
+      await vi.waitFor(() =>
+        expect(
+          screen.getByRole("button", { name: "استخراج وتجهيز المراجعة" }),
+        ).toBeEnabled(),
+      );
       fireEvent.submit(
         screen
           .getByRole("button", { name: "استخراج وتجهيز المراجعة" })
@@ -259,10 +318,11 @@ describe("honest financial display", () => {
         expect(setBatch).toHaveBeenCalledWith({ id: "sheet-review" }),
       );
       const request = fetcher.mock.calls.find(
-        ([, options]) => options?.method === "POST",
+        ([url]) => url === "/api/imports",
       )!;
       const spec = JSON.parse(request[1].body.get("spec") as string);
       expect(spec.sheets).toEqual(["Stock", "Second"]);
+      expect(spec.sheet_mode).toBe("selected");
       expect(fail).not.toHaveBeenCalled();
     } finally {
       vi.unstubAllGlobals();
