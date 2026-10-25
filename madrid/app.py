@@ -331,7 +331,6 @@ def create_app(directory: Path | None = None) -> FastAPI:
                     "start": "2000-01-01",
                     "end": "2000-01-01",
                     **options,
-                    "sheets": [],
                     "column_map": {},
                     "source_dates": "report",
                 }

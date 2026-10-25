@@ -9,7 +9,10 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
+import certifi
 import pytest
+from alembic import command
+from alembic.config import Config
 from fastapi.testclient import TestClient
 from openpyxl import Workbook
 from sqlalchemy import func, select, text
@@ -18,8 +21,9 @@ from sqlalchemy.exc import OperationalError
 from test_imports import SNAPSHOT, accept, csv_bytes, upload
 
 from madrid.app import create_app
+from madrid.auth import hash_password, token_hash
 from madrid.backup import create_cloud_backup, restore_backup
-from madrid.db import Audit, AuthThrottle, Batch, Original, make_engine, session_factory
+from madrid.db import Audit, AuthThrottle, Batch, LoginSession, Original, Owner, make_engine, session_factory
 
 PASSWORD = "synthetic-cloud-password-only"
 INVITATION = "synthetic-cloud-invitation-only"
@@ -72,6 +76,8 @@ def test_postgres_keeps_original_and_batch_after_instance_replacement(cloud, tmp
     monkeypatch.setenv("MADRID_DATA_DIR", str(tmp_path / "replacement"))
     with TestClient(create_app(), headers=HEADERS) as replacement:
         assert replacement.get("/api/auth/status").json()["initialized"] is True
+        replacement.cookies.update(cloud.cookies)
+        assert replacement.get("/api/auth/status").json()["authenticated"] is True
         assert replacement.post("/api/auth/login", json={"password": PASSWORD}).status_code == 200
         report = replacement.get("/api/analytics?start=2026-10-01&end=2026-10-24").json()
         assert report["metrics"]["stock"]["value"] == "10.00"
@@ -198,7 +204,10 @@ def test_cloud_database_rejects_untrusted_tls_certificate(cloud, monkeypatch, tm
     # Only local integration CI uses a private CA; ordinary public cloud DBs use the system bundle.
     if not os.environ.get("MADRID_DATABASE_CA_FILE"):
         pytest.skip("Private test CA not configured; negative trust test needs its own test server")
-    monkeypatch.delenv("MADRID_DATABASE_CA_FILE")
+    private_ca = os.environ["MADRID_DATABASE_CA_FILE"]
+    # Use an actual unrelated trust bundle on every OS. Deleting the override
+    # only tested a missing Linux path on Windows, not certificate rejection.
+    monkeypatch.setenv("MADRID_DATABASE_CA_FILE", certifi.where())
     engine = make_engine(Path(tmp_path) / "unused", os.environ["MADRID_DATABASE_URL"])
     try:
         with pytest.raises(OperationalError, match="certificate verify failed"):
@@ -206,3 +215,69 @@ def test_cloud_database_rejects_untrusted_tls_certificate(cloud, monkeypatch, tm
                 pass
     finally:
         engine.dispose()
+    parsed = make_url(os.environ["MADRID_DATABASE_URL"])
+    if parsed.query.get("hostaddr"):
+        monkeypatch.setenv("MADRID_DATABASE_CA_FILE", private_ca)
+        mismatched = parsed.set(host="madrid-hostname-mismatch.invalid")
+        engine = make_engine(Path(tmp_path) / "unused-host", mismatched.render_as_string(hide_password=False))
+        try:
+            with pytest.raises(OperationalError, match="does not match host name"):
+                with engine.connect():
+                    pass
+        finally:
+            engine.dispose()
+
+
+def test_postgres_upgrades_001_to_002_preserving_owner_session_and_transaction_safety(tmp_path, monkeypatch):
+    url = os.environ.get("MADRID_TEST_DATABASE_URL")
+    if not url:
+        pytest.skip("Real PostgreSQL test database not configured; migration acceptance is not verified")
+    schema = "mri_upgrade_" + uuid.uuid4().hex
+    admin = make_engine(tmp_path / "unused", url)
+    with admin.begin() as connection:
+        connection.execute(text(f'CREATE SCHEMA "{schema}"'))
+    parsed = make_url(url)
+    scoped_url = parsed.set(query={**parsed.query, "options": "-csearch_path=" + schema}).render_as_string(
+        hide_password=False
+    )
+    engine = make_engine(tmp_path / "unused", scoped_url)
+    try:
+        config = Config(str(Path("alembic.ini").resolve()))
+        config.set_main_option("script_location", str(Path("migrations").resolve()))
+        with engine.begin() as connection:
+            config.attributes["connection"] = connection
+            command.upgrade(config, "001")
+            assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "001"
+        factory = session_factory(engine)
+        password_hash = hash_password(PASSWORD)
+        session_token = "synthetic-existing-migration-session"
+        with factory() as db:
+            db.add(Owner(id=1, password_hash=password_hash))
+            db.add(LoginSession(token_hash=token_hash(session_token), expires=int(time.time()) + 3600))
+            db.commit()
+        with engine.begin() as connection:
+            config.attributes["connection"] = connection
+            command.upgrade(config, "002")
+            assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "002"
+        monkeypatch.setenv("MADRID_DATABASE_URL", scoped_url)
+        monkeypatch.setenv("MADRID_DATA_DIR", str(tmp_path / "migration-app"))
+        with TestClient(create_app(), headers=HEADERS) as app:
+            app.cookies.set("madrid_session", session_token)
+            assert app.get("/api/auth/status").json()["authenticated"] is True
+            with factory() as db:
+                assert db.get(Owner, 1).password_hash == password_hash
+                db.add(Original(name="a" * 64 + ".csv", content=b"synthetic rollback"))
+                db.flush()
+                db.rollback()
+                assert db.get(Original, "a" * 64 + ".csv") is None
+            batch = upload(app, SNAPSHOT, reservation_verified=True)
+            accept(app, batch)
+            assert (
+                app.get("/api/analytics?start=2026-10-24&end=2026-10-24").json()["metrics"]["stock"]["value"]
+                == "10.00"
+            )
+    finally:
+        engine.dispose()
+        with admin.begin() as connection:
+            connection.execute(text(f'DROP SCHEMA "{schema}" CASCADE'))
+        admin.dispose()

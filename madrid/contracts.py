@@ -7,8 +7,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-PARSER_VERSION = "1.3.0"
-CONTRACT_VERSION = "1.2.0"
+PARSER_VERSION = "1.3.1"
+CONTRACT_VERSION = "1.3.0"
 DIGITS = str.maketrans("٠١٢٣٤٥٦٧٨٩۰۱۲۳۴۵۶۷۸۹", "01234567890123456789")
 ReportType = Literal["snapshot", "sales", "movement", "costs", "expenses", "targets"]
 
@@ -60,6 +60,7 @@ class ImportSpec(BaseModel):
     encoding: Literal["utf-8-sig", "cp1256"] = "utf-8-sig"
     delimiter: Literal[",", ";", "\t", "auto"] = "auto"
     sheets: list[str] = Field(default_factory=list, max_length=20)
+    sheet_mode: Literal["all", "selected"] | None = None
     pdf_profile: Literal["auto", "generic", "arabic_pos_v1"] = "auto"
     source_dates: Literal["manual", "report"] = "manual"
     sales_coverage: Literal["store", "assigned_only"] = "store"
@@ -72,6 +73,16 @@ class ImportSpec(BaseModel):
 
     @model_validator(mode="after")
     def periods(self) -> ImportSpec:
+        if self.sheet_mode is None:
+            self.sheet_mode = "selected" if self.sheets else "all"
+        if self.sheet_mode == "selected" and not self.sheets:
+            raise ValueError("worksheet_selection_required")
+        if self.sheet_mode == "all" and self.sheets:
+            raise ValueError("worksheet_mode_conflicts_with_selection")
+        if any(not name or len(name) > 31 for name in self.sheets) or len(set(self.sheets)) != len(
+            self.sheets
+        ):
+            raise ValueError("invalid_worksheet_names")
         if self.sales_coverage == "assigned_only" and (self.report_type != "sales" or not self.note.strip()):
             raise ValueError("assigned_sales_scope_requires_sales_report_and_source_note")
         if self.currency not in {"EGP", "USD", "EUR", "SAR", "AED", "GBP"}:

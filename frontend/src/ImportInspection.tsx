@@ -1,5 +1,7 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, labels, message } from "./api";
+import { selectedSheets } from "./import-options";
+import type { ParserOptions, SheetMode } from "./import-options";
 
 type Sheet = {
   name: string;
@@ -15,6 +17,7 @@ type Inspection = {
   format: string;
   status: string;
   sheets: Sheet[];
+  worksheet_names?: string[];
   issues: string[];
   pages: number;
   source_period?: { start: string; end: string } | null;
@@ -90,6 +93,11 @@ export function ImportInspection({
   sheets,
   onSheets,
   onDetected,
+  sheetMode = "all",
+  onSheetMode = () => {},
+  options = { encoding: "utf-8-sig", delimiter: "auto", pdf_profile: "auto" },
+  onReady = () => {},
+  onSourceChange = () => {},
 }: {
   maxBytes: number;
   type: string;
@@ -97,6 +105,11 @@ export function ImportInspection({
   onMapping: (mapping: Record<string, string>) => void;
   sheets: string;
   onSheets: (sheets: string) => void;
+  sheetMode?: SheetMode;
+  onSheetMode?: (mode: SheetMode) => void;
+  options?: ParserOptions;
+  onReady?: (ready: boolean) => void;
+  onSourceChange?: () => void;
   onDetected: (
     type: string,
     period?: { start: string; end: string } | null,
@@ -107,29 +120,70 @@ export function ImportInspection({
   const [error, setError] = useState("");
   const request = useRef(0);
   const input = useRef<HTMLInputElement>(null);
-  async function inspect(file?: File) {
+  const fileRef = useRef<File | undefined>(undefined);
+  const [worksheetNames, setWorksheetNames] = useState<string[]>([]);
+  const key = (kind: string, mode: SheetMode, names: string) =>
+    JSON.stringify([kind, options, mode, names]);
+  const context = key(type, sheetMode, sheets);
+  const inspectedContext = useRef(context);
+  useEffect(() => {
+    if (inspectedContext.current !== context) {
+      request.current += 1;
+      inspectedContext.current = context;
+      setResult(null);
+      setBusy(false);
+      onReady(false);
+      if (fileRef.current)
+        setError(
+          "الخيارات أو الأوراق اتغيرت؛ أعد فحص الملف قبل تجهيز المراجعة",
+        );
+    }
+  }, [context]);
+  useEffect(
+    () => () => {
+      request.current += 1;
+    },
+    [],
+  );
+  function sourceChanged(file?: File) {
+    fileRef.current = file;
+    setWorksheetNames([]);
+    onSourceChange();
+    onMapping({});
+    onSheets("");
+    onSheetMode("all");
+    inspectedContext.current = key(type, "all", "");
+    void inspect(file, "all", "");
+  }
+  async function inspect(file?: File, mode = sheetMode, names = sheets) {
     const generation = ++request.current;
     setResult(null);
     setError("");
     setBusy(false);
-    onMapping({});
-    onSheets("");
+    onReady(false);
     if (!file) return;
     if (file.size > maxBytes) {
       setError(message("upload_too_large"));
       return;
     }
     setBusy(true);
-    const form = input.current?.form;
-    const values = form ? new FormData(form) : new FormData();
+    let selected: string[];
+    try {
+      selected = selectedSheets(names, mode);
+    } catch (e) {
+      setError((e as Error).message);
+      setBusy(false);
+      return;
+    }
     const body = new FormData();
     body.set("file", file);
     body.set(
       "spec",
       JSON.stringify({
         report_type: type,
-        encoding: values.get("encoding") || "utf-8-sig",
-        delimiter: values.get("delimiter") || "auto",
+        ...options,
+        sheet_mode: mode,
+        sheets: selected,
       }),
     );
     try {
@@ -139,12 +193,24 @@ export function ImportInspection({
       });
       if (generation !== request.current) return;
       setResult(inspection);
+      if (inspection.worksheet_names?.length || inspection.sheets.length)
+        setWorksheetNames(
+          inspection.worksheet_names ??
+            inspection.sheets.map((sheet) => sheet.name),
+        );
       const kinds = [
         ...new Set(
           inspection.sheets.map((sheet) => sheet.report_type).filter(Boolean),
         ),
       ];
-      if (kinds.length === 1) onDetected(kinds[0]!, inspection.source_period);
+      if (kinds.length === 1) {
+        inspectedContext.current = key(kinds[0]!, mode, names);
+        onDetected(kinds[0]!, inspection.source_period);
+      }
+      onReady(
+        inspection.sheets.length > 0 &&
+          !["INVALID", "UNSUPPORTED"].includes(inspection.status),
+      );
     } catch (e) {
       if (generation === request.current)
         setError(e instanceof Error ? e.message : "تعذر فحص الملف");
@@ -156,7 +222,7 @@ export function ImportInspection({
   const columns = [
     ...new Set(
       (result?.sheets ?? [])
-        .filter((sheet) => !selected.length || selected.includes(sheet.name))
+        .filter((sheet) => sheetMode === "all" || selected.includes(sheet.name))
         .flatMap((sheet) => sheet.columns)
         .filter(Boolean),
     ),
@@ -173,7 +239,7 @@ export function ImportInspection({
             const transfer = new DataTransfer();
             transfer.items.add(file);
             input.current.files = transfer.files;
-            void inspect(file);
+            sourceChanged(file);
           }
         }}
       >
@@ -185,7 +251,7 @@ export function ImportInspection({
             type="file"
             accept=".pdf,.csv,.xls,.xlsx"
             required
-            onChange={(event) => void inspect(event.target.files?.[0])}
+            onChange={(event) => sourceChanged(event.target.files?.[0])}
           />
         </label>
         <small>
@@ -207,6 +273,60 @@ export function ImportInspection({
           {error}
         </p>
       )}
+      {!!worksheetNames.length &&
+        fileRef.current?.name.toLowerCase().match(/\.xlsx?$/) && (
+          <fieldset>
+            <legend>نطاق أوراق Excel</legend>
+            <label>
+              <input
+                type="radio"
+                name="worksheet_mode"
+                value="all"
+                checked={sheetMode === "all"}
+                onChange={() => {
+                  onSheetMode("all");
+                  onSheets("");
+                }}
+              />
+              كل أوراق الملف
+            </label>
+            <label>
+              <input
+                type="radio"
+                name="worksheet_mode"
+                value="selected"
+                checked={sheetMode === "selected"}
+                onChange={() => onSheetMode("selected")}
+              />
+              أوراق مختارة فقط
+            </label>
+            <p>
+              {sheetMode === "all"
+                ? "كل الأوراق مشمولة في الاستيراد."
+                : selected.length
+                  ? `سيتم استيراد ${selected.length} ورقة مختارة فقط.`
+                  : "اختار ورقة واحدة على الأقل؛ لن يتم استيراد كل الأوراق تلقائيًا."}
+            </p>
+            {worksheetNames.map((name) => (
+              <label key={name}>
+                <input
+                  type="checkbox"
+                  disabled={sheetMode === "all"}
+                  checked={sheetMode === "all" || selected.includes(name)}
+                  onChange={(event) =>
+                    onSheets(
+                      (event.target.checked
+                        ? [...selected, name]
+                        : selected.filter((item) => item !== name)
+                      ).join("\n"),
+                    )
+                  }
+                />
+                قراءة ورقة {name}
+              </label>
+            ))}
+          </fieldset>
+        )}
       {result && (
         <section aria-label="فحص الملف" className="panel">
           <h3>{statuses[result.status]}</h3>
@@ -232,23 +352,6 @@ export function ImportInspection({
                   ? labels[sheet.report_type]
                   : "أعمدة غير معروفة"}
               </summary>
-              {result.format.startsWith("xls") && (
-                <label>
-                  <input
-                    type="checkbox"
-                    checked={selected.includes(sheet.name)}
-                    onChange={(event) =>
-                      onSheets(
-                        (event.target.checked
-                          ? [...selected, sheet.name]
-                          : selected.filter((name) => name !== sheet.name)
-                        ).join("\n"),
-                      )
-                    }
-                  />
-                  قراءة ورقة {sheet.name}
-                </label>
-              )}
               <div className="table-scroll">
                 <table>
                   <thead>

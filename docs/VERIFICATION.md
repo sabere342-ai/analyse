@@ -1,5 +1,7 @@
 # Verification evidence
 
+Current R2-F acceptance: [R2F_CLOSURE.md](R2F_CLOSURE.md) records103 backend passes/7 private-source skips, all9 real isolated PostgreSQL cases with verified TLS,13 UI passes, successful evidence for5 browser journeys, actual PostgreSQL-backed HTTP server restart/exports/recovery, and the remaining private-source/Vercel authorization gates. The initial combined browser run had one failed reupload journey; only that corrected journey was rerun. Earlier run counts below are historical.
+
 R2 current Windows evidence (2026-10-25) is recorded in [R2_DELIVERY.md](R2_DELIVERY.md):93 backend passed/15 explicit external-input skips,10 UI passed,4 Chromium journeys passed, strict build and quality checks passed. An actual isolated HTTP server was stopped/restarted on the same synthetic store; accepted stock persisted, absent profit stayed unavailable, CSV/XLSX/PDF exports succeeded, and audited rollback/rejection passed. Private-report/cloud successes elsewhere in this document are historical and are not a claim that those absent inputs were retested here.
 
 ## Current completed run — 2026-10-24

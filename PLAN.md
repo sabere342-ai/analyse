@@ -1,5 +1,9 @@
 # Delivery status
 
+## R2-F closure — 2026-10-25
+
+`PARTIAL_MADRID_R2F_FUNCTIONAL_DELIVERY`: explicit worksheet scope, consistent inspection options, preserved reinspection choices and invalid/stale mapping protection are delivered. Final backend103 passed/7 private-source skips; all9 isolated PostgreSQL cases ran with verified TLS, migration001→002 and real server/browser restart acceptance. UI13 passed; all5 browser journeys have successful evidence across the combined run and one corrected focused rerun. Actual private reports remain `NOT_RUN_PRIVATE_SOURCE_UNAVAILABLE`; Vercel team authorization remains403. See [R2-F closure evidence](docs/R2F_CLOSURE.md). Same branch and Draft PR#1; no merge or deployment.
+
 ## R2 candidate — 2026-10-25
 
 `PARTIAL_MADRID_R2_FUNCTIONAL_DELIVERY`: complete local improvements to inspection/mapping, generic subtotal and monetary-footer reconciliation, XLS dates, Windows parser/PDF/backup operation and session feedback. Backend93 passed/15 explicit external-input skips; UI10 passed; browser4 passed. See [current delivery and limitations](docs/R2_DELIVERY.md). Private-source acceptance and PostgreSQL integration in this Windows checkout remain unverified. Vercel team access returned403; the existing Preview, database, owner and alias were left untouched. This is a review candidate, not full R2/private-source or hosted acceptance.

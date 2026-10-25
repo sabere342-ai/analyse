@@ -102,6 +102,7 @@ def extract(path: Path, suffix: str, options: dict[str, Any]) -> list[dict[str, 
         from openpyxl import load_workbook
 
         book = load_workbook(path, read_only=True, data_only=False, keep_links=False)
+        options["_worksheet_names"] = book.sheetnames
         if len(book.worksheets) > 20:
             raise ValueError("worksheet_limit")
         if set(options.get("sheets", [])) - set(book.sheetnames):
@@ -125,6 +126,7 @@ def extract(path: Path, suffix: str, options: dict[str, Any]) -> list[dict[str, 
         import xlrd
 
         book = xlrd.open_workbook(str(path), on_demand=True)
+        options["_worksheet_names"] = book.sheet_names()
         if book.nsheets > 20:
             raise ValueError("worksheet_limit")
         if set(options.get("sheets", [])) - set(book.sheet_names()):
@@ -184,6 +186,7 @@ if __name__ == "__main__":
             from madrid.inspection import summarize
 
             response = summarize(output)
+            response["worksheet_names"] = payload["options"].get("_worksheet_names", [])
         else:
             response = {"rows": output}
         sys.stdout.buffer.write(json.dumps(response, ensure_ascii=False).encode("utf-8"))

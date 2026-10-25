@@ -6,6 +6,41 @@ from openpyxl import Workbook
 from tests.test_imports import upload
 
 
+def test_explicit_worksheet_modes_cannot_silently_fall_back_to_all(client):
+    base = {"report_type": "snapshot", "start": "2026-10-24", "end": "2026-10-24", "complete": True}
+    for invalid in [{"sheet_mode": "selected", "sheets": []}, {"sheet_mode": "all", "sheets": ["First"]}]:
+        result = client.post(
+            "/api/imports",
+            files={"file": ("unused.xlsx", b"synthetic")},
+            data={"spec": json.dumps({**base, **invalid})},
+        )
+        assert result.status_code == 422
+    book = Workbook()
+    book.active.title = "First"
+    book.active.append(["barcode", "name", "quantity"])
+    book.active.append(["001", "First", "2"])
+    book.active.append(["TOTAL", "", "2"])
+    other = book.create_sheet("Second")
+    other.append(["quantity", "barcode", "name"])
+    other.append(["99", "002", "Second"])
+    other.append(["99", "", "TOTAL"])
+    book.create_sheet("Empty")
+    stream = io.BytesIO()
+    book.save(stream)
+    spec = {**base, "sheet_mode": "selected", "sheets": ["First"]}
+    for endpoint in ["/api/imports/inspect", "/api/imports"]:
+        result = client.post(
+            endpoint, files={"file": ("sheets.xlsx", stream.getvalue())}, data={"spec": json.dumps(spec)}
+        )
+        assert result.status_code == 200, result.text
+        if endpoint.endswith("inspect"):
+            assert result.json()["worksheet_names"] == ["First", "Second", "Empty"]
+            assert [item["name"] for item in result.json()["sheets"]] == ["First"]
+        else:
+            assert not result.json()["issues"]
+            assert result.json()["reconciliation"]["totals"]["quantity"] == "2"
+
+
 def test_intermediate_subtotal_cannot_hide_behind_correct_grand_total(client):
     batch = upload(
         client,
