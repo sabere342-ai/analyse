@@ -1,5 +1,9 @@
 # Delivery status
 
+## R2-G local acceptance — 2026-10-25
+
+`PASS_MADRID_R2G_LOCAL_REAL_POS_ACCEPTED`: actual inventory/sales/movement originals are now available; independently observed numeric fields, totals, source chains and documented text checks agree with UI-staged records. Explicit acceptance, source-scoped analysis, all3 exports, actual restart, idempotence and isolated audited rollback passed. Combined Chromium5/5 exited0. Historical full-field golden is unavailable; the authorized alternative's exact scope is documented in [R2-G acceptance](docs/R2G_ACCEPTANCE.md). Runtime/tests remain unchanged from `2fc5d3e99f145ce3a21533a0a6706ad2543f6981`; PostgreSQL evidence was preserved without rerun. Hosted acceptance remains `BLOCKED_VERCEL_ACCESS_OR_AUTHORIZATION`; owning project/team are now independently confirmed, but the connection needs owner consent. Same Draft PR#1, no deployment or merge.
+
 ## R2-F closure — 2026-10-25
 
 `PARTIAL_MADRID_R2F_FUNCTIONAL_DELIVERY`: explicit worksheet scope, consistent inspection options, preserved reinspection choices and invalid/stale mapping protection are delivered. Final backend103 passed/7 private-source skips; all9 isolated PostgreSQL cases ran with verified TLS, migration001→002 and real server/browser restart acceptance. UI13 passed; all5 browser journeys have successful evidence across the combined run and one corrected focused rerun. Actual private reports remain `NOT_RUN_PRIVATE_SOURCE_UNAVAILABLE`; Vercel team authorization remains403. See [R2-F closure evidence](docs/R2F_CLOSURE.md). Same branch and Draft PR#1; no merge or deployment.
