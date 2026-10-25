@@ -1,0 +1,76 @@
+# Data contracts and privacy
+
+## Supported import contract
+
+The application supports bounded local CSV, XLS, XLSX and table-based text PDF extraction. The three supplied Arabic POS PDFs now have an inspected `arabic_pos_v1` adapter. Generic/scanned/encrypted/changed layouts are not declared validated by that fact; unsupported layouts fail safely and no external OCR/AI upload occurs. Synthetic templates remain explicitly synthetic.
+
+| Report | Required canonical columns | Optional columns |
+| --- | --- | --- |
+| snapshot | barcode, name, quantity | category, reserved, available, introduced |
+| sales | barcode, name, sold, returned | category, rep, gross, discount, return_value, net, cogs, in_stock_days |
+| movement | barcode, name, date, kind, incoming, outgoing | category, reference, running_balance |
+| costs | barcode, cost | name |
+| expenses | date, category, amount | reference |
+| targets | rep, target | — |
+
+Header aliases support common Arabic/English identifiers; explicit `column_map` maps canonical name to source heading when needed. Financial columns are never interpreted from an Arabic Discount label automatically. Confirm their meanings explicitly. Codes remain strings with leading zeros; Arabic/Persian digits normalize to ASCII, boundary whitespace trims. Names never determine identity. Numeric Excel code cells require a text source; no guessed padding. XLSX formulas/external links/macros are rejected or staged with blocking issues; XLS parsing reads values without executing formulas/macros.
+
+Dates accept ISO or explicit day/month/year. Metadata dates are ISO. Arabic decimal/thousands separators and valid comma thousands grouping are supported; ambiguous comma decimals are rejected. Money/quantity values must be finite exact decimals with at most six fractional places and magnitude ≤10^12. Original cells and locators remain separately preserved.
+
+Movement kinds: `sale`, `purchase`, `sales_return`, `purchase_return`, `transfer_in`, `transfer_out`, `adjustment_in`, `adjustment_out`. Incoming/outgoing magnitudes must be nonnegative and match kind. A running balance is never a transaction. Sales quantities/discount/credit magnitudes are nonnegative; net units/value/COGS reversal may be negative.
+
+## Inspected Arabic POS profile
+
+`pdf_profile=auto` recognizes a report title plus the fixed physical column schema; `generic` opts out, and explicit `arabic_pos_v1` requires that signature. The selected report type must agree with the printed report. Dates must match in the default API `source_dates=manual` mode. With explicit `source_dates=report` (enabled in the UI), recognized PDFs supply their printed date/period, which is validated and displayed in the staged batch; generic PDFs/Excel/CSV keep entered dates. Final detected dates participate in identity, so changing an unused input date cannot duplicate that interpretation. The fixed profile rejects custom column maps rather than ignoring them. Parser version is 1.2.0 and contract version is 1.2.0; reprocessing cannot add overlapping accepted facts.
+
+pdfplumber supplies table/row/cell geometry. Bounded PDFium cell reads supply logical Arabic/mixed Unicode without reversing barcodes/Latin identifiers. Both original spatial cells and decoded logical cells, bounding boxes, table/page/row, section context and source period are retained. PDFium was already a locked dependency and is now explicit; its bundled license notices remain intact. PyMuPDF was used only as an independent read-only inspection comparison, not shipped as an application dependency.
+
+- Snapshot: seven spatial columns map available, reserved, quantity, unit, barcode, name, category; repeated headings excluded; warehouse subtotal and repeated grand footer independently reconcile.
+- Representative sales: eight columns map value, signed discount, unit price, unit, net quantity, returned, sold, product/code. Employee context comes from the physical label above each table and survives page boundaries. Multiple price occurrences of one code are retained; item, employee and report totals are checked independently.
+- Movement: eleven columns map running value, outgoing value, incoming value, running quantity, outgoing quantity, incoming quantity, unit, product/code, warehouse, operation/document and date. Source operation label plus direction determines sale/purchase/return/transfer/adjustment. Category/grand totals validate flow columns; repeated product running-quantity and running-value chains are checked separately and never summed as flows.
+
+For these sources, `unit price × net quantity − signed net discount = reported value` is verified on every sales detail. The signed discount includes return reversals; keep `source_net_discount` separate from canonical nonnegative sale discount. `source_unit_price` and running values are nonadditive. Canonical source net sales is supported, but gross sale discounts/refund credits and sale-time COGS cannot be fabricated from the net aggregate. Movement value columns remain source observations, not automatically approved historical COGS.
+
+## Metadata, reconciliation and review
+
+Metadata carries report type, start/end, coverage scope (default `store`), currency, expected totals, column mapping, encoding/delimiter, selected sheets, coverage/financial/reservation/availability confirmations, and source note. Snapshot/costs use one date (`start == end`). A scope must describe the same population across comparable imports; do not label a single-rep/partial-warehouse report as a complete store report.
+
+Each physical row has immutable raw cells, page/table/row or sheet/row location, occurrence, classification, normalized values and issues. Batch carries original filename, SHA-256, parser/contract versions, mapping/settings, period, statuses and reconciliation. Continuation rows link their source locator to the completed detail. Header/subtotal/footer rows remain visible and excluded from detail totals.
+
+Required independent reconciliation field: snapshot `quantity`; sales/movement `net_quantity`; costs `cost`; expenses `amount`; targets `target`. Sales with verified monetary values also require source `net` total. Recognized final footer can supply the primary total; enter other totals from the source. Excel column positions and continuation state reset at each worksheet. Each worksheet's final footer is checked against that worksheet's details; when every selected sheet supplies a primary total, those source totals are summed for the workbook. An explicit workbook total cannot hide a wrong per-sheet footer. The import screen accepts exact worksheet names, one per line, to select data sheets; an empty selection reads all sheets. All recognized numerical footer fields are checked even if an explicit total was supplied. Comparisons are exact; no hidden tolerance or fabricated balancing row. A positional PDF adapter may need later grouping rules for intermediate subtotals; generic extraction does not establish its reliability on an unseen source.
+
+Correct data/mapping and reimport when an issue blocks acceptance; rejected/rolled-back batches remain immutable evidence. Add an explanatory source note to distinguish a deliberate corrected/reprocessing candidate when needed. Acceptance is a separate authenticated action after staging; only accepted batches contribute. Reject/rollback require a recorded reason. Rollback removes contribution without deleting rows/history.
+
+`GET /api/batches/{id}/comparison` is an authenticated read-only comparison with accepted sources in the same scope. It counts existing/new barcode identities, shows up to20 stock changes against a preceding snapshot, and identifies overlapping accepted coverage before enabling approval. Snapshot differences are balance observations, not inferred movements. The transaction acceptance lock remains authoritative if another instance changes coverage after preview.
+
+The UI distinguishes pending versus accepted files. Login and successful acceptance/rollback select dates from accepted reports (sales, then movement, then snapshot) with an independent latest stock date in the same scope and reload the stored facts. Editing analysis filters does not issue requests; the analysis button applies them. A request generation guard discards stale report responses. Displayed period and export links use the filters of the displayed result, even while the user edits the next query.
+
+## Identity, source authority and storage
+
+Interpretation identity hashes original checksum + complete metadata/mapping + parser_version + contract_version. Changed parser/config creates a new candidate. An exact repeat returns its existing status. A second batch cannot add overlapping accepted coverage for the same report type/scope, including equivalent reformatted files. Explicitly rollback the prior batch before accepting a replacement. SQLite `BEGIN IMMEDIATE` serializes this check and acceptance; concurrent acceptance is tested. Snapshot/cost duplicates for one barcode within one source block acceptance. Sales/movement identical physical occurrences remain distinct; product/date/amount is never a deduplication key.
+
+Sales aggregates are the authority for that representative report, not an assertion that another report has identical store coverage. When complete sales and movement periods coexist, compare gross sold/returned units by barcode even without an opening snapshot; show mismatches with both sources. Default store coverage disables demand when sources conflict. `sales_coverage=assigned_only` requires a sales report and explicit source note; when every barcode is a nonnegative subset of a complete movement period, mark `explained_unassigned` and use movement sale/return units for store demand. Negative per-barcode differences stay unexplained and block demand. Full-store money remains unavailable; preserve `reported_net_sales`/`reported_net_discount` as scoped source measures. No unassigned transaction rows or monetary values are fabricated. Missing product amounts remain unavailable instead of zero in that case. Never reconcile a discrepancy by dropping rows.
+
+Sales aggregates are the sales/rep authority. Movement and sales sources may describe the same event and are never summed as independent sales. The latest appropriate accepted snapshot is a point-in-time balance, not a movement. Scope filters are explicit; cross-scope warehouse consolidation is not guessed. Product names/categories are display attributes keyed by normalized barcode; raw variations remain traceable.
+
+SQLAlchemy/Alembic version batches (JSON raw/normalized exact string values), audit events, owner hash, hashed expiring sessions and rule settings in SQLite. No separate mutable financial ledger exists. Cost snapshots value inventory only; historical sale COGS must be explicitly supplied/verified on sales rows. Expenses and representative targets have their own reviewable imports. No ERP is required.
+
+## Safety and retention
+
+20 MiB file limit plus streamed HTTP body limit; 200 PDF pages; 20 sheets; 10,000 nonempty rows; 100 columns; 2,000 characters/cell. XLSX expansion ≤100 MiB, bounded entry count/ratio; no external links/macros. Parsers run in a local subprocess with 1 GiB address-space, CPU and wall-time limits. Originals use checksum-based internal names, private directories and integrity checks. Rendering is bounded separately and denies all external/local URL fetching.
+
+Private originals, DB/journal files, exports, backups and credentials are ignored by Git. Authenticated API never caches responses; PWA caches only static shell/assets. Owner setup is local-only, password is scrypt-hashed, sessions are random/hash-stored/expiring/HttpOnly/SameSite, mutations require custom header and allowed Origin. Network exposure requires explicit HTTPS/secure-cookie/host/origin configuration and operational review; this task does not deploy. No raw report data or credentials should enter server logs; SQL parameters are hidden.
+
+Original deletion is an explicit authenticated retention action, allowed only for inactive batches with no active dependent source and a reason; normalized/audit history is retained. No automatic destructive retention job. Owner decides business/legal retention and backup expiry. Encrypted backup/restore commands are in README; run in maintenance mode to coordinate DB and original-file retention. No original is uploaded externally.
+
+## Actual-source evidence and remaining semantic review
+
+Inspected private files: `مبيعات المندوبين بالاصناف.pdf`, `حركة تفصيلية للمخازن.pdf`, `جرد المخازن.pdf` under `samples/private/`. Their printed periods/as-of were observed and matched: sales/movement 2026-10-01–23; stock 2026-10-24. The snapshot row sum and repeated source totals reconcile to the privately supplied quantity expectation. All original hashes remain unchanged. Private numeric golden expectations and per-row locators are in ignored `samples/private/acceptance.json`; financial totals and employee rows are not committed.
+
+On arrival: verify hash/type/page count; inspect beginning/middle/end and all transitions/totals; map physical headings/details/continuations; compare positioned Arabic/mixed text with visual pages; establish barcode/digit/date/sign/warehouse/currency/tax meanings; test discount arithmetic on actual rows and subtotals; compare parsers under license constraints; reconcile all detail to the actual footer and establish what the supplied quantity expectation measures. Record observed/inferred/unresolved statements separately. Use the default private evidence file or an override in `MADRID_PRIVATE_SPEC` for actual acceptance; never commit private rows or guessed accuracy.
+
+The owner confirmed that unassigned sales are excluded from the representative report. Check this subset by barcode before using complete movement as store-unit authority; scope confirmation cannot waive a contrary per-code difference. Changed interpretation is staged with new contract/config identity and accepted only after audited rollback of the prior overlapping batch. Snapshot and sales dates are independently visible; next-day stock is not silently backdated.
+
+## Cloud persistence profile
+
+Local SQLite/filesystem behavior is retained. With `MADRID_DATABASE_URL`, SQLAlchemy uses PostgreSQL through psycopg3.3.6 and full certificate/hostname verification; all exact monetary strings and row/provenance contracts are unchanged. Originals are private binary rows keyed by checksum/suffix, committed atomically with staging metadata. Temporary parse files are isolated per invocation and removed; they are not a durable store. PostgreSQL transaction advisory locks serialize acceptance and migration startup across instances. Rollback preserves audit/facts; explicit original retention applies to inactive sources only and rejects sources still shared by active interpretations. Missing cloud credentials in the generated container fail startup; no ephemeral SQLite fallback. Upload limit can be reduced by `MADRID_MAX_UPLOAD_BYTES`, is enforced by parser/body handling, and is disclosed to the UI.
